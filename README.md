@@ -94,6 +94,16 @@ To use another exported low-level executor:
 export ISAAC_NARROW_LOW_LEVEL_POLICY_PATH=/absolute/or/relative/path/to/exported/policy.pt
 ```
 
+The complete training entry point is:
+
+```bash
+bash scripts/narrow_passage/train_decision_with_gait.sh
+```
+
+It exports the selected low-level gait checkpoint with
+`scripts/reinforcement_learning/rsl_rl/export_policy.py`, then launches
+`Isaac-Navigation-Narrow-Anymal-C-v0` high-level decision training.
+
 Checkpoint:
 
 ```bash

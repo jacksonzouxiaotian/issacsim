@@ -32,12 +32,26 @@ The high-level decision tasks use `PreTrainedPolicyAction`, which loads a
 TorchScript/JIT `policy.pt`. It cannot load raw RSL-RL `model_*.pt`
 checkpoints directly.
 
+The complete one-command entry point is:
+
+```bash
+bash scripts/narrow_passage/train_decision_with_gait.sh
+```
+
+Useful overrides:
+
+```bash
+NUM_ENVS=1024 MAX_ITERATIONS=400 DEVICE=cuda:0 \
+  bash scripts/narrow_passage/train_decision_with_gait.sh
+```
+
 Export the current low-level recovery executor:
 
 ```bash
-conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/play.py \
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/export_policy.py \
   --task Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0 \
   --checkpoint logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_16-17-04_staged_memory_near_wall_clean_v1/model_1743.pt \
+  --output_dir logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_16-17-04_staged_memory_near_wall_clean_v1/exported \
   --num_envs 1 \
   --headless \
   --device cuda:0
