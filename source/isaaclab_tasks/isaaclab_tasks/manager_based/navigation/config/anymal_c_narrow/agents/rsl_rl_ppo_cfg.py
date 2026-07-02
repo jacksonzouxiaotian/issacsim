@@ -39,6 +39,13 @@ class NavigationNarrowEnvPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 
 @configclass
+class NarrowDecisionPPORunnerCfg(NavigationNarrowEnvPPORunnerCfg):
+    """High-level decision policy trained above the exported narrow-gait policy."""
+
+    experiment_name = "anymal_c_narrow_decision"
+
+
+@configclass
 class NarrowGaitPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 1500

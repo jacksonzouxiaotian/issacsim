@@ -797,6 +797,30 @@ def goal_reached_bonus_xy(
     ).float()
 
 
+def clean_goal_reached_bonus_xy(
+    env,
+    goal_x: float,
+    goal_y: float,
+    tol: float = 0.20,
+    failure_terms=("base_contact", "bad_orientation", "base_too_low"),
+    asset_name: str = "robot",
+):
+    """Sparse 2D success bonus that treats success-with-failure as failure."""
+    reached = goal_reached_xy(
+        env,
+        goal_x=goal_x,
+        goal_y=goal_y,
+        tol=tol,
+        asset_name=asset_name,
+    )
+    active_terms = set(env.termination_manager.active_terms)
+    failed = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+    for term_name in failure_terms:
+        if term_name in active_terms:
+            failed |= env.termination_manager.get_term(term_name).bool()
+    return (reached & (~failed)).float()
+
+
 def unfinished_time_penalty_xy(
     env,
     goal_x: float,

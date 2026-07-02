@@ -10,6 +10,7 @@ import math
 import isaaclab.sim as sim_utils
 import isaaclab_tasks.manager_based.navigation.mdp as mdp
 from . import mdp_narrow as narrow_mdp # <<< 新增的窄通道辅助模块
+from .low_level_policy_cfg import LOW_LEVEL_ENV_CFG, LOW_LEVEL_POLICY_PATH
 
 from isaaclab.assets import AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
@@ -22,16 +23,9 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
-
-from isaaclab_tasks.manager_based.locomotion.velocity.config.anymal_c.flat_env_cfg import (
-    AnymalCFlatEnvCfg,
-)
 
 from isaaclab_assets.robots.anymal import ANYMAL_C_CFG
 
-
-LOW_LEVEL_ENV_CFG = AnymalCFlatEnvCfg()
 
 # =============================================================================
 # Corridor parameters
@@ -187,7 +181,7 @@ class ActionsCfg:
 
     pre_trained_policy_action: mdp.PreTrainedPolicyActionCfg = mdp.PreTrainedPolicyActionCfg(
         asset_name="robot",
-        policy_path=f"{ISAACLAB_NUCLEUS_DIR}/Policies/ANYmal-C/Blind/policy.pt",
+        policy_path=LOW_LEVEL_POLICY_PATH,
         low_level_decimation=4,
         low_level_actions=LOW_LEVEL_ENV_CFG.actions.joint_pos,
         low_level_observations=LOW_LEVEL_ENV_CFG.observations.policy,
@@ -338,7 +332,7 @@ class RewardsCfg:
     )
 
     success_bonus = RewTerm(
-        func=narrow_mdp.goal_reached_bonus,
+        func=narrow_mdp.clean_goal_reached_bonus,
         weight=220.0,
         params={
             "goal_x": GOAL_X,

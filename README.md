@@ -57,6 +57,43 @@ Scope statement: this package validates an Isaac Sim low-level
 narrow-passage traversal and recovery module. It should not be presented as a
 complete navigation benchmark by itself.
 
+## Two-Layer Decision Setup
+
+The high-level task entries:
+
+```bash
+Isaac-Navigation-Narrow-Anymal-C-v0
+Isaac-Navigation-LCorridor-Anymal-C-v0
+```
+
+are now wired as decision policies above the exported narrow-gait policy. The
+high-level action is a 3D velocity command; the low-level executor remains the
+12D joint-target gait policy.
+
+The wrapper requires a TorchScript/JIT low-level policy, not a raw RSL-RL
+`model_*.pt` checkpoint. Export the selected low-level checkpoint first:
+
+```bash
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/play.py \
+  --task Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0 \
+  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_16-17-04_staged_memory_near_wall_clean_v1/model_1743.pt \
+  --num_envs 1 \
+  --headless \
+  --device cuda:0
+```
+
+`play.py` writes:
+
+```bash
+logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_16-17-04_staged_memory_near_wall_clean_v1/exported/policy.pt
+```
+
+To use another exported low-level executor:
+
+```bash
+export ISAAC_NARROW_LOW_LEVEL_POLICY_PATH=/absolute/or/relative/path/to/exported/policy.pt
+```
+
 Checkpoint:
 
 ```bash

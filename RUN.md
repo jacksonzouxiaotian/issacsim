@@ -26,6 +26,41 @@ logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_10-07-24_staged_memory_hard_v1/model
 Current hard recovery checkpoint is not yet publication-clean as a main
 contribution: clean SR is below 70% on the tested recovery scenarios.
 
+## Export Low-Level Executor for High-Level Training
+
+The high-level decision tasks use `PreTrainedPolicyAction`, which loads a
+TorchScript/JIT `policy.pt`. It cannot load raw RSL-RL `model_*.pt`
+checkpoints directly.
+
+Export the current low-level recovery executor:
+
+```bash
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/play.py \
+  --task Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0 \
+  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_16-17-04_staged_memory_near_wall_clean_v1/model_1743.pt \
+  --num_envs 1 \
+  --headless \
+  --device cuda:0
+```
+
+After export, high-level decision training can use:
+
+```bash
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Navigation-Narrow-Anymal-C-v0 \
+  --headless --num_envs 2048 --max_iterations 800 \
+  --run_name decision_straight_with_narrow_gait_v1
+```
+
+For a different exported executor, set:
+
+```bash
+export ISAAC_NARROW_LOW_LEVEL_POLICY_PATH=/absolute/or/relative/path/to/exported/policy.pt
+```
+
+The runner for these high-level tasks is `NarrowDecisionPPORunnerCfg`, and logs
+go under `logs/rsl_rl/anymal_c_narrow_decision/`.
+
 ## Geometry Experiments
 
 Oracle geometry:
