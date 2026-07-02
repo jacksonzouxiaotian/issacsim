@@ -314,6 +314,117 @@ class NarrowGaitEnvCfg_PLAY(NarrowGaitEnvCfg):
 
 
 @configclass
+class NarrowGaitOracleGeometryEnvCfg(NarrowGaitEnvCfg):
+    """Straight corridor with privileged analytic geometry observation."""
+
+
+@configclass
+class NarrowGaitSensorEstimatedGeometryEnvCfg(NarrowGaitEnvCfg):
+    """Straight corridor with noisy sensor-estimated geometry observation."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.observations.policy.corridor_state = ObsTerm(
+            func=narrow_mdp.sensor_estimated_corridor_state,
+            params={
+                "corridor_width": CORRIDOR_WIDTH,
+                "corridor_length": CORRIDOR_LENGTH,
+                "estimated_d_min": ESTIMATED_D_MIN,
+            },
+        )
+
+
+@configclass
+class NarrowGaitGeneralizationDoorwayEnvCfg(NarrowGaitSensorEstimatedGeometryEnvCfg):
+    """Doorway generalization scene with a local constriction."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        jamb_thickness = 0.12
+        jamb_depth = 0.28
+        doorway_width = 0.76
+        jamb_y = doorway_width / 2.0 + jamb_thickness / 2.0
+        self.scene.doorway_left_jamb = AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/DoorwayLeftJamb",
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(2.35, -jamb_y, CORRIDOR_WALL_HEIGHT / 2.0)),
+            spawn=sim_utils.CuboidCfg(
+                size=(jamb_depth, jamb_thickness, CORRIDOR_WALL_HEIGHT),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.50, 0.58, 0.66)),
+            ),
+        )
+        self.scene.doorway_right_jamb = AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/DoorwayRightJamb",
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(2.35, jamb_y, CORRIDOR_WALL_HEIGHT / 2.0)),
+            spawn=sim_utils.CuboidCfg(
+                size=(jamb_depth, jamb_thickness, CORRIDOR_WALL_HEIGHT),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.50, 0.58, 0.66)),
+            ),
+        )
+
+
+@configclass
+class NarrowGaitGeneralizationAsymmetricObstacleEnvCfg(NarrowGaitSensorEstimatedGeometryEnvCfg):
+    """Asymmetric obstacle generalization scene with one-sided protrusions."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.right_protrusion = AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/RightProtrusion",
+            init_state=AssetBaseCfg.InitialStateCfg(
+                pos=(2.00, CORRIDOR_WIDTH / 2.0 - 0.05, CORRIDOR_WALL_HEIGHT / 2.0)
+            ),
+            spawn=sim_utils.CuboidCfg(
+                size=(0.55, 0.18, CORRIDOR_WALL_HEIGHT),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.60, 0.52, 0.44)),
+            ),
+        )
+        self.scene.left_protrusion = AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/LeftProtrusion",
+            init_state=AssetBaseCfg.InitialStateCfg(
+                pos=(3.25, -(CORRIDOR_WIDTH / 2.0 - 0.08), CORRIDOR_WALL_HEIGHT / 2.0)
+            ),
+            spawn=sim_utils.CuboidCfg(
+                size=(0.42, 0.14, CORRIDOR_WALL_HEIGHT),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.60, 0.52, 0.44)),
+            ),
+        )
+
+
+@configclass
+class NarrowGaitGeneralizationLCorridorEnvCfg(NarrowGaitSensorEstimatedGeometryEnvCfg):
+    """L-turn scene entry for generalization experiments.
+
+    The low-level policy still observes compact local geometry; this scene is an
+    evaluation scaffold and should not be reported as validated until evaluated.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.corner_block = AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/LCornerBlock",
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(3.15, 0.18, CORRIDOR_WALL_HEIGHT / 2.0)),
+            spawn=sim_utils.CuboidCfg(
+                size=(0.40, 0.62, CORRIDOR_WALL_HEIGHT),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.42, 0.54, 0.50)),
+            ),
+        )
+        self.scene.turn_guide_wall = AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/LTurnGuideWall",
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(3.55, -0.46, CORRIDOR_WALL_HEIGHT / 2.0)),
+            spawn=sim_utils.CuboidCfg(
+                size=(1.10, CORRIDOR_WALL_THICKNESS, CORRIDOR_WALL_HEIGHT),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.42, 0.54, 0.50)),
+            ),
+        )
+
+
+@configclass
 class NarrowGaitRecoveryEnvCfg(NarrowGaitEnvCfg):
     """Fine-tuning task that mixes entrance traversal with in-corridor recovery starts."""
 
@@ -378,6 +489,22 @@ class NarrowGaitRecoveryMediumEnvCfg(NarrowGaitRecoveryEnvCfg):
 @configclass
 class NarrowGaitRecoveryHardEnvCfg(NarrowGaitRecoveryEnvCfg):
     recovery_reset_cases = RECOVERY_RESET_HARD_CASES
+
+
+@configclass
+class NarrowGaitRecoveryHardSensorEstimatedGeometryEnvCfg(NarrowGaitRecoveryEnvCfg):
+    recovery_reset_cases = RECOVERY_RESET_HARD_CASES
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.observations.policy.corridor_state = ObsTerm(
+            func=narrow_mdp.sensor_estimated_corridor_state,
+            params={
+                "corridor_width": CORRIDOR_WIDTH,
+                "corridor_length": CORRIDOR_LENGTH,
+                "estimated_d_min": ESTIMATED_D_MIN,
+            },
+        )
 
 
 @configclass

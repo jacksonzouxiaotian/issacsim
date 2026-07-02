@@ -6,6 +6,15 @@ repository.
 
 ## Contents
 
+- `INSTALL.md`
+  - Reproducible IsaacLab overlay instructions and pinned workspace commit.
+- `RUN.md`
+  - Commands for width scans, oracle/sensor geometry comparison, recovery
+    ablations, staged recovery training, and generalization evals.
+- `ISAACLAB_VERSION.txt`
+  - Minimal version lock for this work package.
+- `make_eval_tables.py`
+  - Builds compact markdown tables from evaluation CSV files.
 - `source/isaaclab_tasks/.../anymal_c_narrow/`
   - IsaacLab task registration and configs for narrow-passage experiments.
   - `narrow_gait_env_cfg.py` is the low-level gait task. The action is 12D joint
@@ -28,6 +37,25 @@ repository.
 ```bash
 Isaac-Narrow-Gait-Anymal-C-v0
 ```
+
+Recommended experiment split:
+
+```bash
+Isaac-Narrow-Gait-OracleGeometry-Anymal-C-v0
+Isaac-Narrow-Gait-SensorEstimatedGeometry-Anymal-C-v0
+```
+
+Generalization scene entries:
+
+```bash
+Isaac-Narrow-Gait-Generalization-Doorway-Anymal-C-v0
+Isaac-Narrow-Gait-Generalization-AsymmetricObstacle-Anymal-C-v0
+Isaac-Narrow-Gait-Generalization-LCorridor-Anymal-C-v0
+```
+
+Scope statement: this package validates an Isaac Sim low-level
+narrow-passage traversal and recovery module. It should not be presented as a
+complete navigation benchmark by itself.
 
 Checkpoint:
 
@@ -166,3 +194,7 @@ Compared with the previous single hard-mixed stage, staged curriculum improves
 clean success for `left_wall` and reduces collision in both `left_wall` and
 `yaw_left`. The policy still needs additional hard-stage tuning before the
 recovery results are publication-clean.
+
+Baseline naming note: the built-in `heuristic_dwb_like`,
+`heuristic_rpp_like`, and `heuristic_mppi_like` controllers are lightweight
+local heuristics. They are not real Nav2 DWB/RPP/MPPI results.

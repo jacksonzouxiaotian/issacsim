@@ -1,0 +1,11 @@
+IsaacLab workspace commit: 20f77074b0ac2e64f22bb63ef4f7070977a2dac0
+Isaac Sim asset generation observed in saved env configs: 5.1
+Conda environment used locally: issaaclabdog
+Package scope: Isaac Sim low-level narrow-passage traversal and recovery validation
+
+Notes:
+- This is a lightweight work package, not a full IsaacLab repository snapshot.
+- Reproduce by checking out the IsaacLab commit above, then overlaying this
+  package's source/ and scripts/ directories onto that workspace.
+- The included checkpoints and CSVs were produced on the local IsaacLab
+  workspace at the commit above.

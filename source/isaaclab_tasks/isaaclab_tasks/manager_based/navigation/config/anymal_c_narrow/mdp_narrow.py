@@ -148,6 +148,49 @@ def corridor_state(
     return torch.stack([x_norm, y_norm, left_norm, right_norm, goal_norm, delta_norm, feasible_margin_norm], dim=-1)
 
 
+def sensor_estimated_corridor_state(
+    env,
+    corridor_width: float,
+    corridor_length: float,
+    estimated_d_min: float = DEFAULT_ESTIMATED_D_MIN,
+    y_noise_std: float = 0.025,
+    clearance_noise_std: float = 0.020,
+    progress_noise_std: float = 0.030,
+    width_bias: float = 0.0,
+    asset_name="robot",
+):
+    """Return a noisy sensor-estimated version of the same 7D geometry state.
+
+    This keeps the policy input shape identical to the privileged oracle state,
+    while separating oracle geometry experiments from estimator-noise ablations.
+    It is not a full ray/LiDAR pipeline; it is a compact simulated estimator.
+    """
+    pos = _local_root_pos(env, asset_name=asset_name)
+    x = pos[:, 0]
+    y = pos[:, 1]
+
+    noisy_width = max(corridor_width + width_bias, 1.0e-3)
+    half_w = noisy_width * 0.5
+    eps = 1e-6
+
+    y_hat = y + torch.randn_like(y) * y_noise_std
+    x_hat = x + torch.randn_like(x) * progress_noise_std
+    left_clearance = half_w - y_hat + torch.randn_like(y) * clearance_noise_std
+    right_clearance = half_w + y_hat + torch.randn_like(y) * clearance_noise_std
+    dist_to_goal = corridor_length - x_hat
+
+    x_norm = x_hat / max(corridor_length, eps)
+    y_norm = y_hat / max(half_w, eps)
+    left_norm = left_clearance / max(half_w, eps)
+    right_norm = right_clearance / max(half_w, eps)
+    goal_norm = dist_to_goal / max(corridor_length, eps)
+    delta_d = noisy_width - estimated_d_min
+    delta_norm = torch.full_like(x, delta_d / max(estimated_d_min, eps))
+    feasible_margin_norm = torch.minimum(left_clearance, right_clearance) / max(estimated_d_min, eps)
+
+    return torch.stack([x_norm, y_norm, left_norm, right_norm, goal_norm, delta_norm, feasible_margin_norm], dim=-1)
+
+
 def forward_progress_reward(env, asset_name="robot"):
     """Reward forward progress along corridor x direction."""
     robot = env.scene[asset_name]

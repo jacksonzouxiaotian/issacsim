@@ -24,7 +24,25 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="Evaluate narrow-passage local traversal policies.")
 parser.add_argument("--task", type=str, default="Isaac-Navigation-Narrow-Anymal-C-v0")
-parser.add_argument("--controller", type=str, default="rpp", choices=["dwb", "rpp", "mppi", "tebrl", "checkpoint"])
+parser.add_argument(
+    "--controller",
+    type=str,
+    default="heuristic_rpp_like",
+    choices=[
+        "heuristic_dwb_like",
+        "heuristic_rpp_like",
+        "heuristic_mppi_like",
+        "dwb",
+        "rpp",
+        "mppi",
+        "tebrl",
+        "checkpoint",
+    ],
+    help=(
+        "Use checkpoint for learned policies. The *_like controllers are simple local heuristics, "
+        "not real Nav2 DWB/RPP/MPPI implementations. Legacy aliases dwb/rpp/mppi are accepted."
+    ),
+)
 parser.add_argument("--checkpoint", type=str, default=None, help="RSL-RL checkpoint for controller=checkpoint/tebrl.")
 parser.add_argument("--widths", type=float, nargs="+", default=[0.75, 0.85, 0.95])
 parser.add_argument("--num_envs", type=int, default=64)
@@ -146,6 +164,7 @@ def configure_recovery_scenario(env_cfg, width, scenario):
 
 def heuristic_actions(env, controller, width):
     """Return local velocity commands for simple local baselines."""
+    controller = controller.replace("heuristic_", "").replace("_like", "")
     robot = env.scene["robot"]
     pos = _local_root_pos(env)
     x = pos[:, 0]
