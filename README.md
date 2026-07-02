@@ -195,6 +195,20 @@ clean success for `left_wall` and reduces collision in both `left_wall` and
 `yaw_left`. The policy still needs additional hard-stage tuning before the
 recovery results are publication-clean.
 
+Additional recovery runs on 2026-07-02:
+
+| checkpoint | scenario | raw SR | clean SR | collision | wedge | time_mean | clearance_mean | osc_mean |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| staged_memory_hard_v2/model_1295.pt | left_wall | 0.9375 | 0.2656 | 0.6719 | 0.0 | 4.268s | 0.177 | 35.516 |
+| staged_memory_hard_v2/model_1295.pt | yaw_left | 0.2656 | 0.1562 | 0.3281 | 0.0 | 8.390s | 0.339 | 74.328 |
+| staged_memory_hard_clean_reward_v1/model_1494.pt | left_wall | 0.9375 | 0.3125 | 0.6406 | 0.0 | 4.004s | 0.177 | 36.828 |
+| staged_memory_hard_clean_reward_v1/model_1494.pt | yaw_left | 0.2031 | 0.1094 | 0.3750 | 0.0 | 7.728s | 0.347 | 68.219 |
+
+Interpretation: hard_v2 improves raw goal-reaching but learns collision-heavy
+passage. Clean-reward fine-tuning slightly improves `left_wall` clean SR but
+does not solve the core recovery problem and hurts `yaw_left`. Recovery should
+still not be claimed as a main contribution.
+
 Baseline naming note: the built-in `heuristic_dwb_like`,
 `heuristic_rpp_like`, and `heuristic_mppi_like` controllers are lightweight
 local heuristics. They are not real Nav2 DWB/RPP/MPPI results.

@@ -277,7 +277,7 @@ class NarrowGaitEnvCfg(AnymalCFlatEnvCfg):
             params={"min_stuck_steps": 5.0},
         )
         self.rewards.success_bonus = RewTerm(
-            func=narrow_mdp.goal_reached_bonus,
+            func=narrow_mdp.clean_goal_reached_bonus,
             weight=180.0,
             params={
                 "goal_x": GOAL_X,
@@ -489,6 +489,25 @@ class NarrowGaitRecoveryMediumEnvCfg(NarrowGaitRecoveryEnvCfg):
 @configclass
 class NarrowGaitRecoveryHardEnvCfg(NarrowGaitRecoveryEnvCfg):
     recovery_reset_cases = RECOVERY_RESET_HARD_CASES
+
+
+@configclass
+class NarrowGaitRecoveryHardCleanRewardEnvCfg(NarrowGaitRecoveryHardEnvCfg):
+    """Hard recovery fine-tune with stricter clean-success pressure."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.rewards.track_lin_vel_xy_exp.weight = 0.9
+        self.rewards.forward_progress.weight = 0.8
+        self.rewards.undesired_contacts.weight = -4.0
+        self.rewards.unsafe_clearance.weight = -16.0
+        self.rewards.stuck_penalty.weight = -10.0
+        self.rewards.success_bonus.weight = 170.0
+        self.rewards.failure_termination.weight = -650.0
+        self.rewards.wall_escape.weight = 12.0
+        self.rewards.centerline_velocity.weight = 8.0
+        self.rewards.yaw_correction.weight = 2.0
+        self.rewards.oscillation.weight = -0.8
 
 
 @configclass

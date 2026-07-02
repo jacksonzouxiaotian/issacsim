@@ -247,6 +247,32 @@ def goal_reached_bonus(
     ).float()
 
 
+def clean_goal_reached_bonus(
+    env,
+    goal_x: float,
+    tol: float = 0.15,
+    corridor_width: float | None = None,
+    lateral_margin: float = 0.08,
+    failure_terms=("stuck", "base_contact", "bad_orientation", "base_too_low"),
+    asset_name="robot",
+):
+    """Sparse success bonus that treats success-with-failure as failure."""
+    reached = goal_reached(
+        env,
+        goal_x=goal_x,
+        tol=tol,
+        corridor_width=corridor_width,
+        lateral_margin=lateral_margin,
+        asset_name=asset_name,
+    )
+    active_terms = set(env.termination_manager.active_terms)
+    failed = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+    for term_name in failure_terms:
+        if term_name in active_terms:
+            failed |= env.termination_manager.get_term(term_name).bool()
+    return (reached & (~failed)).float()
+
+
 def stuck_penalty(env, min_forward_speed: float = 0.03, goal_x: float = 9.75, asset_name="robot"):
     """Penalty when robot is moving too slowly before reaching the goal."""
     robot = env.scene[asset_name]
