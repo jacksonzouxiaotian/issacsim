@@ -209,6 +209,39 @@ passage. Clean-reward fine-tuning slightly improves `left_wall` clean SR but
 does not solve the core recovery problem and hurts `yaw_left`. Recovery should
 still not be claimed as a main contribution.
 
+Important evaluator correction on 2026-07-02:
+
+The evaluator now freezes each environment's metrics after its first episode
+termination. Earlier recovery CSVs could mix a collision from the first episode
+with a success after automatic reset in the same env slot. Use the
+`first_episode_*` CSVs for recovery claims.
+
+Corrected first-episode recovery ablation:
+
+| condition | clean SR | collision | time | clearance | osc |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| w/o recovery, left_wall | 0.0000 | 0.6250 | 5.968s | 0.184 | 62.17 |
+| clean recovery, left_wall | 0.6406 | 0.3125 | 4.004s | 0.183 | 12.25 |
+| near-wall clean, left_wall | 0.6406 | 0.3125 | 3.532s | 0.181 | 10.25 |
+| w/o recovery, right_wall | 0.0000 | 0.9688 | 3.573s | 0.186 | 27.00 |
+| clean recovery, right_wall | 0.5781 | 0.3750 | 2.181s | 0.183 | 9.34 |
+| near-wall clean, right_wall | 0.6094 | 0.3438 | 2.257s | 0.184 | 9.97 |
+
+Yaw recovery remains weak under the same first-episode protocol:
+
+| checkpoint | scenario | clean SR | collision |
+| --- | --- | ---: | ---: |
+| clean_reward_v1/model_1494.pt | yaw_left | 0.1562 | 0.3281 |
+| balanced_clean_v1/model_1793.pt | yaw_left | 0.1875 | 0.4219 |
+| yaw_clean_v1/model_1500.pt | yaw_left | 0.1875 | 0.2969 |
+| yaw_clean_v1/model_1793.pt | yaw_left | 0.1875 | 0.4844 |
+| clean_reward_v1/model_1494.pt | yaw_right | 0.1562 | 0.2969 |
+
+Interpretation: the strongest current contribution is near-wall recovery, not
+large-yaw recovery. The policy shows a meaningful recovery gain over the
+stage-1 gait checkpoint, but it should still be framed as incomplete because it
+does not reach 70% clean SR across all recovery modes.
+
 Baseline naming note: the built-in `heuristic_dwb_like`,
 `heuristic_rpp_like`, and `heuristic_mppi_like` controllers are lightweight
 local heuristics. They are not real Nav2 DWB/RPP/MPPI results.

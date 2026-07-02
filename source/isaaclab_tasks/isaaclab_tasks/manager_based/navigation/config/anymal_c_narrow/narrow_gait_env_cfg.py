@@ -151,6 +151,80 @@ RECOVERY_RESET_HARD_CASES = (
     },
 )
 
+RECOVERY_RESET_BALANCED_CLEAN_CASES = (
+    {
+        "weight": 0.20,
+        "pose_range": {"x": (-0.9, -0.5), "y": (-0.05, 0.05), "yaw": (-0.10, 0.10)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[0]["velocity_range"],
+    },
+    {
+        "weight": 0.18,
+        "pose_range": {"x": (0.6, 2.7), "y": (0.16, 0.27), "yaw": (-0.28, -0.08)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[1]["velocity_range"],
+    },
+    {
+        "weight": 0.18,
+        "pose_range": {"x": (0.6, 2.7), "y": (-0.27, -0.16), "yaw": (0.08, 0.28)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[2]["velocity_range"],
+    },
+    {
+        "weight": 0.22,
+        "pose_range": {"x": (0.4, 2.4), "y": (-0.05, 0.05), "yaw": (0.34, 0.62)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[3]["velocity_range"],
+    },
+    {
+        "weight": 0.22,
+        "pose_range": {"x": (0.4, 2.4), "y": (-0.05, 0.05), "yaw": (-0.62, -0.34)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[3]["velocity_range"],
+    },
+)
+
+RECOVERY_RESET_YAW_CLEAN_CASES = (
+    {
+        "weight": 0.15,
+        "pose_range": {"x": (-0.9, -0.5), "y": (-0.04, 0.04), "yaw": (-0.08, 0.08)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[0]["velocity_range"],
+    },
+    {
+        "weight": 0.12,
+        "pose_range": {"x": (0.6, 2.4), "y": (0.14, 0.24), "yaw": (-0.24, -0.08)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[1]["velocity_range"],
+    },
+    {
+        "weight": 0.12,
+        "pose_range": {"x": (0.6, 2.4), "y": (-0.24, -0.14), "yaw": (0.08, 0.24)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[2]["velocity_range"],
+    },
+    {
+        "weight": 0.305,
+        "pose_range": {"x": (0.4, 2.2), "y": (-0.05, 0.05), "yaw": (0.34, 0.64)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[3]["velocity_range"],
+    },
+    {
+        "weight": 0.305,
+        "pose_range": {"x": (0.4, 2.2), "y": (-0.05, 0.05), "yaw": (-0.64, -0.34)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[3]["velocity_range"],
+    },
+)
+
+RECOVERY_RESET_NEAR_WALL_CLEAN_CASES = (
+    {
+        "weight": 0.15,
+        "pose_range": {"x": (-0.9, -0.5), "y": (-0.04, 0.04), "yaw": (-0.08, 0.08)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[0]["velocity_range"],
+    },
+    {
+        "weight": 0.425,
+        "pose_range": {"x": (0.7, 2.8), "y": (0.15, 0.27), "yaw": (-0.26, -0.06)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[1]["velocity_range"],
+    },
+    {
+        "weight": 0.425,
+        "pose_range": {"x": (0.7, 2.8), "y": (-0.27, -0.15), "yaw": (0.06, 0.26)},
+        "velocity_range": RECOVERY_RESET_HARD_CASES[2]["velocity_range"],
+    },
+)
+
 RECOVERY_RESET_CASES = RECOVERY_RESET_HARD_CASES
 
 
@@ -507,6 +581,85 @@ class NarrowGaitRecoveryHardCleanRewardEnvCfg(NarrowGaitRecoveryHardEnvCfg):
         self.rewards.wall_escape.weight = 12.0
         self.rewards.centerline_velocity.weight = 8.0
         self.rewards.yaw_correction.weight = 2.0
+        self.rewards.oscillation.weight = -0.8
+
+
+@configclass
+class NarrowGaitRecoveryBalancedCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnvCfg):
+    """Balanced clean recovery curriculum with explicit yaw-realignment starts."""
+
+    recovery_reset_cases = RECOVERY_RESET_BALANCED_CLEAN_CASES
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.18, 0.45)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.02, 0.02)
+        self.rewards.forward_progress = RewTerm(
+            func=narrow_mdp.contact_free_forward_progress_reward,
+            weight=1.0,
+            params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.16, "max_abs_yaw": 0.35},
+        )
+        self.rewards.heading_alignment.weight = -7.0
+        self.rewards.recovery_realign.weight = 18.0
+        self.rewards.wall_escape.weight = 14.0
+        self.rewards.centerline_velocity.weight = 10.0
+        self.rewards.yaw_correction.weight = 4.0
+        self.rewards.oscillation.weight = -1.0
+
+
+@configclass
+class NarrowGaitRecoveryYawCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnvCfg):
+    """Yaw-heavy recovery phase that trains reorientation before forward passage."""
+
+    recovery_reset_cases = RECOVERY_RESET_YAW_CLEAN_CASES
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.05, 0.30)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.01, 0.01)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.01, 0.01)
+        self.rewards.track_lin_vel_xy_exp.weight = 0.55
+        self.rewards.forward_progress = RewTerm(
+            func=narrow_mdp.contact_free_forward_progress_reward,
+            weight=0.7,
+            params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.14, "max_abs_yaw": 0.30},
+        )
+        self.rewards.centerline_penalty.weight = -3.5
+        self.rewards.heading_alignment.weight = -10.0
+        self.rewards.recovery_realign.weight = 16.0
+        self.rewards.yaw_realign = RewTerm(
+            func=narrow_mdp.yaw_realign_progress_reward,
+            weight=24.0,
+            params={"goal_x": GOAL_X},
+        )
+        self.rewards.yaw_correction.weight = 7.0
+        self.rewards.centerline_velocity.weight = 6.0
+        self.rewards.wall_escape.weight = 8.0
+        self.rewards.oscillation.weight = -1.2
+
+
+@configclass
+class NarrowGaitRecoveryNearWallCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnvCfg):
+    """Near-wall recovery phase focused on contact-free wall escape."""
+
+    recovery_reset_cases = RECOVERY_RESET_NEAR_WALL_CLEAN_CASES
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.12, 0.38)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.01, 0.01)
+        self.rewards.forward_progress = RewTerm(
+            func=narrow_mdp.contact_free_forward_progress_reward,
+            weight=0.9,
+            params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.15, "max_abs_yaw": 0.36},
+        )
+        self.rewards.centerline_penalty.weight = -4.0
+        self.rewards.unsafe_clearance.weight = -20.0
+        self.rewards.recovery_realign.weight = 18.0
+        self.rewards.wall_escape.weight = 20.0
+        self.rewards.centerline_velocity.weight = 14.0
+        self.rewards.heading_alignment.weight = -5.0
+        self.rewards.yaw_correction.weight = 3.0
         self.rewards.oscillation.weight = -0.8
 
 

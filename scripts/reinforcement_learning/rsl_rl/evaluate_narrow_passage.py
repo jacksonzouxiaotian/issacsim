@@ -231,33 +231,38 @@ def make_stats(num_envs, device, rejected):
 
 
 def update_stats(stats, env, width, step_idx):
+    active_mask = ~stats.done
+    if not bool(active_mask.any()):
+        return
+
     pos = _local_root_pos(env)
     robot = env.scene["robot"]
     clearance = width * 0.5 - torch.abs(pos[:, 1])
-    stats.min_clearance = torch.minimum(stats.min_clearance, clearance)
+    stats.min_clearance[active_mask] = torch.minimum(stats.min_clearance[active_mask], clearance[active_mask])
 
     lat_sign = torch.sign(robot.data.root_lin_vel_w[:, 1])
     changed = (lat_sign != 0.0) & (stats.last_lat_sign != 0.0) & (lat_sign != stats.last_lat_sign)
-    stats.oscillations += changed.float()
-    stats.last_lat_sign[lat_sign != 0.0] = lat_sign[lat_sign != 0.0]
+    stats.oscillations[active_mask] += changed[active_mask].float()
+    update_lat = (lat_sign != 0.0) & active_mask
+    stats.last_lat_sign[update_lat] = lat_sign[update_lat]
 
     speed = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=1)
     near_wall = clearance < 0.06
-    stats.wedge |= near_wall & (speed < 0.035) & (env.episode_length_buf > 12)
+    stats.wedge |= active_mask & near_wall & (speed < 0.035) & (env.episode_length_buf > 12)
 
     active = set(env.termination_manager.active_terms)
     if "goal_reached" in active:
-        stats.success |= env.termination_manager.get_term("goal_reached")
+        stats.success |= active_mask & env.termination_manager.get_term("goal_reached")
     if "base_contact" in active:
-        stats.collision |= env.termination_manager.get_term("base_contact")
+        stats.collision |= active_mask & env.termination_manager.get_term("base_contact")
     if "bad_orientation" in active:
-        stats.collision |= env.termination_manager.get_term("bad_orientation")
+        stats.collision |= active_mask & env.termination_manager.get_term("bad_orientation")
     if "base_too_low" in active:
-        stats.collision |= env.termination_manager.get_term("base_too_low")
+        stats.collision |= active_mask & env.termination_manager.get_term("base_too_low")
     if "stuck" in active:
-        stats.wedge |= env.termination_manager.get_term("stuck")
+        stats.wedge |= active_mask & env.termination_manager.get_term("stuck")
 
-    just_done = env.reset_buf & (~stats.done)
+    just_done = env.reset_buf & active_mask
     stats.done |= env.reset_buf
     stats.completion_step[just_done] = step_idx
 

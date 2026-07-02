@@ -23,6 +23,7 @@ def _failure_memory(env):
             "last_lateral_sign": torch.zeros(env.num_envs, device=env.device),
             "oscillation_counter": torch.zeros(env.num_envs, device=env.device),
             "last_realign_error": torch.zeros(env.num_envs, device=env.device),
+            "last_yaw_error": torch.zeros(env.num_envs, device=env.device),
             "last_clearance": torch.zeros(env.num_envs, device=env.device),
         }
     return env._narrow_memory
@@ -199,6 +200,31 @@ def forward_progress_reward(env, asset_name="robot"):
     vx = robot.data.root_lin_vel_w[:, 0]
 
     return torch.clamp(vx, min=0.0, max=1.0)
+
+
+def contact_free_forward_progress_reward(
+    env,
+    corridor_width: float,
+    min_clearance: float = 0.16,
+    max_abs_yaw: float = 0.35,
+    asset_name="robot",
+):
+    """Reward forward progress only after the base is clear and roughly aligned."""
+    robot = env.scene[asset_name]
+    pos = _local_root_pos(env, asset_name=asset_name)
+    y = pos[:, 1]
+    yaw = _yaw_from_quat_wxyz(robot.data.root_quat_w)
+    clearance = corridor_width * 0.5 - torch.abs(y)
+    vx = robot.data.root_lin_vel_w[:, 0]
+
+    active_terms = set(env.termination_manager.active_terms)
+    failed = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+    for term_name in ("stuck", "base_contact", "bad_orientation", "base_too_low"):
+        if term_name in active_terms:
+            failed |= env.termination_manager.get_term(term_name).bool()
+
+    clear_and_aligned = (clearance > min_clearance) & (torch.abs(yaw) < max_abs_yaw) & (~failed)
+    return torch.where(clear_and_aligned, torch.clamp(vx, min=0.0, max=0.8), torch.zeros_like(vx))
 
 
 def centerline_error_l1(env, corridor_width: float, asset_name="robot"):
@@ -493,6 +519,20 @@ def yaw_correction_reward(env, asset_name: str = "robot"):
     correcting_speed = -torch.sign(yaw) * wz
     needs_correction = torch.abs(yaw) > 0.05
     return torch.where(needs_correction, torch.clamp(correcting_speed, min=0.0, max=0.8), torch.zeros_like(wz))
+
+
+def yaw_realign_progress_reward(env, goal_x: float, asset_name: str = "robot"):
+    """Reward reductions in absolute yaw error before the goal."""
+    memory = reset_failure_memory(env)
+    robot = env.scene[asset_name]
+    pos = _local_root_pos(env, asset_name=asset_name)
+    yaw_error = torch.abs(_yaw_from_quat_wxyz(robot.data.root_quat_w))
+    valid = (pos[:, 0] > 0.0) & (pos[:, 0] < goal_x)
+    first_step = env.episode_length_buf <= 1
+    improved = torch.clamp(memory["last_yaw_error"] - yaw_error, min=0.0, max=0.20)
+    reward = torch.where(valid & (~first_step), improved, torch.zeros_like(yaw_error))
+    memory["last_yaw_error"][:] = yaw_error
+    return reward
 
 
 def oscillation_penalty(env):
