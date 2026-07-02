@@ -33,6 +33,126 @@ ESTIMATED_D_MIN = 0.72
 GOAL_X = CORRIDOR_LENGTH - 0.20
 GOAL_TOL = 0.20
 
+RECOVERY_RESET_MILD_CASES = (
+    {
+        "weight": 0.55,
+        "pose_range": {"x": (-0.9, -0.5), "y": (-0.05, 0.05), "yaw": (-0.10, 0.10)},
+        "velocity_range": {
+            "x": (0.0, 0.05),
+            "y": (0.0, 0.0),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        },
+    },
+    {
+        "weight": 0.15,
+        "pose_range": {"x": (0.4, 2.2), "y": (0.10, 0.18), "yaw": (-0.16, -0.04)},
+        "velocity_range": {
+            "x": (-0.02, 0.06),
+            "y": (-0.02, 0.02),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.05, 0.05),
+        },
+    },
+    {
+        "weight": 0.15,
+        "pose_range": {"x": (0.4, 2.2), "y": (-0.18, -0.10), "yaw": (0.04, 0.16)},
+        "velocity_range": {
+            "x": (-0.02, 0.06),
+            "y": (-0.02, 0.02),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.05, 0.05),
+        },
+    },
+    {
+        "weight": 0.15,
+        "pose_range": {"x": (0.4, 2.0), "y": (-0.04, 0.04), "yaw": (-0.22, 0.22)},
+        "velocity_range": {
+            "x": (-0.02, 0.05),
+            "y": (-0.02, 0.02),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.06, 0.06),
+        },
+    },
+)
+
+RECOVERY_RESET_MEDIUM_CASES = (
+    {
+        "weight": 0.40,
+        "pose_range": {"x": (-0.9, -0.5), "y": (-0.05, 0.05), "yaw": (-0.10, 0.10)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[0]["velocity_range"],
+    },
+    {
+        "weight": 0.22,
+        "pose_range": {"x": (0.5, 2.6), "y": (0.14, 0.24), "yaw": (-0.24, -0.08)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[1]["velocity_range"],
+    },
+    {
+        "weight": 0.22,
+        "pose_range": {"x": (0.5, 2.6), "y": (-0.24, -0.14), "yaw": (0.08, 0.24)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[2]["velocity_range"],
+    },
+    {
+        "weight": 0.16,
+        "pose_range": {"x": (0.4, 2.3), "y": (-0.06, 0.06), "yaw": (-0.38, 0.38)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[3]["velocity_range"],
+    },
+)
+
+RECOVERY_RESET_HARD_CASES = (
+    {
+        "weight": 0.35,
+        "pose_range": {"x": (-0.9, -0.5), "y": (-0.05, 0.05), "yaw": (-0.10, 0.10)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[0]["velocity_range"],
+    },
+    {
+        "weight": 0.25,
+        "pose_range": {"x": (0.6, 2.8), "y": (0.18, 0.29), "yaw": (-0.32, -0.10)},
+        "velocity_range": {
+            "x": (-0.03, 0.06),
+            "y": (-0.03, 0.03),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.08, 0.08),
+        },
+    },
+    {
+        "weight": 0.25,
+        "pose_range": {"x": (0.6, 2.8), "y": (-0.29, -0.18), "yaw": (0.10, 0.32)},
+        "velocity_range": {
+            "x": (-0.03, 0.06),
+            "y": (-0.03, 0.03),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.08, 0.08),
+        },
+    },
+    {
+        "weight": 0.15,
+        "pose_range": {"x": (0.4, 2.4), "y": (-0.08, 0.08), "yaw": (-0.55, 0.55)},
+        "velocity_range": {
+            "x": (-0.04, 0.04),
+            "y": (-0.02, 0.02),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.12, 0.12),
+        },
+    },
+)
+
+RECOVERY_RESET_CASES = RECOVERY_RESET_HARD_CASES
+
 
 @configclass
 class NarrowGaitEnvCfg(AnymalCFlatEnvCfg):
@@ -166,6 +286,7 @@ class NarrowGaitEnvCfg(AnymalCFlatEnvCfg):
                 "lateral_margin": 0.08,
             },
         )
+        self.rewards.failure_termination = RewTerm(func=narrow_mdp.failure_termination_penalty, weight=-80.0)
 
         self.terminations.goal_reached = DoneTerm(
             func=narrow_mdp.goal_reached,
@@ -185,6 +306,121 @@ class NarrowGaitEnvCfg(AnymalCFlatEnvCfg):
 
 @configclass
 class NarrowGaitEnvCfg_PLAY(NarrowGaitEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.scene.env_spacing = 8.0
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class NarrowGaitRecoveryEnvCfg(NarrowGaitEnvCfg):
+    """Fine-tuning task that mixes entrance traversal with in-corridor recovery starts."""
+
+    recovery_reset_cases = RECOVERY_RESET_HARD_CASES
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.events.reset_base = EventTerm(
+            func=narrow_mdp.reset_root_state_corridor_recovery,
+            mode="reset",
+            params={"cases": self.recovery_reset_cases},
+        )
+
+        self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.55)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.02, 0.02)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.03, 0.03)
+        self.commands.base_velocity.ranges.heading = (-0.05, 0.05)
+
+        self.rewards.track_lin_vel_xy_exp.weight = 1.1
+        self.rewards.forward_progress.weight = 1.2
+        self.rewards.centerline_penalty.weight = -5.0
+        self.rewards.unsafe_clearance.weight = -10.0
+        self.rewards.unsafe_clearance.params["safety_margin"] = 0.22
+        self.rewards.stuck_penalty.weight = -8.0
+        self.rewards.recovery_progress.weight = 4.0
+        self.rewards.success_bonus.weight = 120.0
+        self.rewards.failure_termination.weight = -320.0
+        self.rewards.heading_alignment = RewTerm(func=narrow_mdp.heading_error_abs, weight=-4.0)
+        self.rewards.recovery_realign = RewTerm(
+            func=narrow_mdp.recovery_realign_reward,
+            weight=14.0,
+            params={"corridor_width": CORRIDOR_WIDTH, "goal_x": GOAL_X},
+        )
+        self.rewards.wall_escape = RewTerm(
+            func=narrow_mdp.wall_escape_reward,
+            weight=10.0,
+            params={"corridor_width": CORRIDOR_WIDTH, "near_wall_threshold": 0.24},
+        )
+        self.rewards.centerline_velocity = RewTerm(
+            func=narrow_mdp.centerline_velocity_reward,
+            weight=7.0,
+            params={"corridor_width": CORRIDOR_WIDTH, "near_wall_threshold": 0.24},
+        )
+        self.rewards.yaw_correction = RewTerm(func=narrow_mdp.yaw_correction_reward, weight=3.0)
+        self.rewards.oscillation = RewTerm(func=narrow_mdp.oscillation_penalty, weight=-0.5)
+
+        self.terminations.stuck.params["window_s"] = 1.4
+        self.terminations.stuck.params["min_forward_speed"] = 0.025
+
+
+@configclass
+class NarrowGaitRecoveryMildEnvCfg(NarrowGaitRecoveryEnvCfg):
+    recovery_reset_cases = RECOVERY_RESET_MILD_CASES
+
+
+@configclass
+class NarrowGaitRecoveryMediumEnvCfg(NarrowGaitRecoveryEnvCfg):
+    recovery_reset_cases = RECOVERY_RESET_MEDIUM_CASES
+
+
+@configclass
+class NarrowGaitRecoveryHardEnvCfg(NarrowGaitRecoveryEnvCfg):
+    recovery_reset_cases = RECOVERY_RESET_HARD_CASES
+
+
+@configclass
+class NarrowGaitRecoveryNoMemoryEnvCfg(NarrowGaitRecoveryEnvCfg):
+    """Recovery curriculum with memory channels zeroed for ablation training."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.observations.policy.recovery_memory = ObsTerm(
+            func=narrow_mdp.zero_recovery_memory_state,
+            params={
+                "corridor_width": CORRIDOR_WIDTH,
+                "estimated_d_min": ESTIMATED_D_MIN,
+            },
+        )
+
+
+@configclass
+class NarrowGaitRecoveryMildNoMemoryEnvCfg(NarrowGaitRecoveryNoMemoryEnvCfg):
+    recovery_reset_cases = RECOVERY_RESET_MILD_CASES
+
+
+@configclass
+class NarrowGaitRecoveryMediumNoMemoryEnvCfg(NarrowGaitRecoveryNoMemoryEnvCfg):
+    recovery_reset_cases = RECOVERY_RESET_MEDIUM_CASES
+
+
+@configclass
+class NarrowGaitRecoveryHardNoMemoryEnvCfg(NarrowGaitRecoveryNoMemoryEnvCfg):
+    recovery_reset_cases = RECOVERY_RESET_HARD_CASES
+
+
+@configclass
+class NarrowGaitRecoveryEnvCfg_PLAY(NarrowGaitRecoveryEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.scene.env_spacing = 8.0
+        self.observations.policy.enable_corruption = False
+
+
+@configclass
+class NarrowGaitRecoveryNoMemoryEnvCfg_PLAY(NarrowGaitRecoveryNoMemoryEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32

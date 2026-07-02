@@ -17,6 +17,9 @@ repository.
 - `logs/rsl_rl/anymal_c_narrow_gait/2026-06-30_15-57-59_low_level_gait_width085_stage1/`
   - `model_299.pt`: trained stage-1 low-level gait checkpoint.
   - `params/`: saved agent and environment configs.
+- `logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_*_staged_memory_*_v1/`
+  - staged recovery curriculum checkpoints for mild, medium, and hard reset
+    distributions.
 - `logs/narrow_passage_eval/`
   - CSV and summary JSON files from offline evaluation.
 
@@ -99,3 +102,67 @@ Interpretation: the stage-1 checkpoint has learned straight narrow-passage
 traversal, but has not yet learned in-corridor recovery from near-wall/yaw
 misalignment. The next training stage should fine-tune from this checkpoint with
 near-wall, yawed, and low-speed stuck reset states.
+
+## Staged Recovery Curriculum
+
+The recovery curriculum is split into explicit reset stages:
+
+```bash
+Isaac-Narrow-Gait-Recovery-Mild-Anymal-C-v0
+Isaac-Narrow-Gait-Recovery-Medium-Anymal-C-v0
+Isaac-Narrow-Gait-Recovery-Hard-Anymal-C-v0
+```
+
+The evaluator now writes both:
+
+- `raw_success`: reached the goal.
+- `success`: clean success, meaning goal reached without collision, wedge, or
+  rejection. This prevents `success && collision` from being counted as success.
+
+Staged memory checkpoints:
+
+```bash
+logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_09-59-07_staged_memory_mild_v1/model_498.pt
+logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_10-02-47_staged_memory_medium_v1/model_697.pt
+logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_10-07-24_staged_memory_hard_v1/model_896.pt
+```
+
+Training chain:
+
+```bash
+# stage-1 -> mild
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Narrow-Gait-Recovery-Mild-Anymal-C-v0 \
+  --headless --num_envs 2048 --max_iterations 200 \
+  --resume --load_run 2026-06-30_15-57-59_low_level_gait_width085_stage1 \
+  --checkpoint model_299.pt \
+  --run_name staged_memory_mild_v1
+
+# mild -> medium
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Narrow-Gait-Recovery-Medium-Anymal-C-v0 \
+  --headless --num_envs 2048 --max_iterations 200 \
+  --resume --load_run 2026-07-02_09-59-07_staged_memory_mild_v1 \
+  --checkpoint model_498.pt \
+  --run_name staged_memory_medium_v1
+
+# medium -> hard
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Narrow-Gait-Recovery-Hard-Anymal-C-v0 \
+  --headless --num_envs 2048 --max_iterations 200 \
+  --resume --load_run 2026-07-02_10-02-47_staged_memory_medium_v1 \
+  --checkpoint model_697.pt \
+  --run_name staged_memory_hard_v1
+```
+
+Staged hard checkpoint, clean-success evaluation:
+
+| scenario | raw SR | clean SR | collision | wedge | time_mean | clearance_mean | osc_mean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| left_wall | 0.8281 | 0.4531 | 0.4844 | 0.0 | 5.408s | 0.181 | 39.094 |
+| yaw_left | 0.2656 | 0.1406 | 0.3125 | 0.0 | 8.615s | 0.343 | 73.281 |
+
+Compared with the previous single hard-mixed stage, staged curriculum improves
+clean success for `left_wall` and reduces collision in both `left_wall` and
+`yaw_left`. The policy still needs additional hard-stage tuning before the
+recovery results are publication-clean.

@@ -111,7 +111,15 @@ def configure_straight_width(env_cfg, width):
 def configure_recovery_scenario(env_cfg, width, scenario):
     if scenario == "nominal":
         return
-    pose_range = env_cfg.events.reset_base.params["pose_range"]
+    velocity_range = {
+        "x": (0.0, 0.0),
+        "y": (0.0, 0.0),
+        "z": (0.0, 0.0),
+        "roll": (0.0, 0.0),
+        "pitch": (0.0, 0.0),
+        "yaw": (0.0, 0.0),
+    }
+    pose_range = env_cfg.events.reset_base.params.get("pose_range", {})
     if scenario == "left_wall":
         pose_range["x"] = (1.2, 1.8)
         pose_range["y"] = (width * 0.5 - 0.22, width * 0.5 - 0.16)
@@ -128,6 +136,12 @@ def configure_recovery_scenario(env_cfg, width, scenario):
         pose_range["x"] = (0.6, 1.2)
         pose_range["y"] = (-0.04, 0.04)
         pose_range["yaw"] = (-0.55, -0.35)
+    if "pose_range" in env_cfg.events.reset_base.params:
+        env_cfg.events.reset_base.params["pose_range"] = pose_range
+    elif "cases" in env_cfg.events.reset_base.params:
+        env_cfg.events.reset_base.params["cases"] = (
+            {"weight": 1.0, "pose_range": pose_range, "velocity_range": velocity_range},
+        )
 
 
 def heuristic_actions(env, controller, width):
@@ -282,6 +296,11 @@ def run_width(width):
         step_count = int(stats.completion_step[env_id].item())
         if step_count < 0:
             step_count = args_cli.max_steps
+        raw_success = bool(stats.success[env_id].item())
+        collision = bool(stats.collision[env_id].item())
+        wedge = bool(stats.wedge[env_id].item())
+        rejected = bool(stats.rejected[env_id].item())
+        clean_success = raw_success and not collision and not wedge and not rejected
         rows.append(
             {
                 "controller": args_cli.controller,
@@ -290,10 +309,11 @@ def run_width(width):
                 "width": float(width),
                 "delta_d": float(width - args_cli.estimated_d_min),
                 "trial": env_id,
-                "success": int(stats.success[env_id].item()),
-                "collision": int(stats.collision[env_id].item()),
-                "wedge": int(stats.wedge[env_id].item()),
-                "rejected": int(stats.rejected[env_id].item()),
+                "success": int(clean_success),
+                "raw_success": int(raw_success),
+                "collision": int(collision),
+                "wedge": int(wedge),
+                "rejected": int(rejected),
                 "oscillation_count": float(stats.oscillations[env_id].item()),
                 "completion_time": float(step_count * dt),
                 "min_clearance": float(stats.min_clearance[env_id].item()),

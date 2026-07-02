@@ -1,5 +1,8 @@
 import torch
 
+import isaaclab.utils.math as math_utils
+from isaaclab.managers import SceneEntityCfg
+
 
 DEFAULT_ESTIMATED_D_MIN = 0.72
 
@@ -19,6 +22,8 @@ def _failure_memory(env):
             "last_progress_vel": torch.zeros(env.num_envs, device=env.device),
             "last_lateral_sign": torch.zeros(env.num_envs, device=env.device),
             "oscillation_counter": torch.zeros(env.num_envs, device=env.device),
+            "last_realign_error": torch.zeros(env.num_envs, device=env.device),
+            "last_clearance": torch.zeros(env.num_envs, device=env.device),
         }
     return env._narrow_memory
 
@@ -39,6 +44,65 @@ def failure_termination_penalty(env, term_names=("stuck", "base_contact", "bad_o
         if term_name in active_terms:
             penalty += env.termination_manager.get_term(term_name).float()
     return penalty
+
+
+def _yaw_from_quat_wxyz(quat: torch.Tensor) -> torch.Tensor:
+    w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    return torch.atan2(siny_cosp, cosy_cosp)
+
+
+def _sample_range(range_pair: tuple[float, float], count: int, device: str) -> torch.Tensor:
+    low, high = range_pair
+    return low + (high - low) * torch.rand(count, device=device)
+
+
+def reset_root_state_corridor_recovery(
+    env,
+    env_ids: torch.Tensor,
+    cases: tuple[dict, ...],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Reset root state from a mixture of entrance and in-corridor recovery cases.
+
+    Each case is a dict with:
+        - weight: sampling probability before normalization
+        - pose_range: x/y/z/roll/pitch/yaw ranges
+        - velocity_range: x/y/z/roll/pitch/yaw ranges
+    """
+    asset = env.scene[asset_cfg.name]
+    root_states = asset.data.default_root_state[env_ids].clone()
+    device = asset.device
+    num_resets = len(env_ids)
+
+    weights = torch.tensor([case.get("weight", 1.0) for case in cases], device=device, dtype=torch.float)
+    weights = weights / torch.clamp(weights.sum(), min=1.0e-6)
+    case_ids = torch.multinomial(weights, num_resets, replacement=True)
+
+    pose_samples = torch.zeros(num_resets, 6, device=device)
+    velocity_samples = torch.zeros(num_resets, 6, device=device)
+    pose_keys = ["x", "y", "z", "roll", "pitch", "yaw"]
+    vel_keys = ["x", "y", "z", "roll", "pitch", "yaw"]
+    for case_index, case in enumerate(cases):
+        selected = case_ids == case_index
+        count = int(selected.sum().item())
+        if count == 0:
+            continue
+        pose_range = case.get("pose_range", {})
+        velocity_range = case.get("velocity_range", {})
+        for key_index, key in enumerate(pose_keys):
+            pose_samples[selected, key_index] = _sample_range(pose_range.get(key, (0.0, 0.0)), count, device)
+        for key_index, key in enumerate(vel_keys):
+            velocity_samples[selected, key_index] = _sample_range(velocity_range.get(key, (0.0, 0.0)), count, device)
+
+    positions = root_states[:, 0:3] + env.scene.env_origins[env_ids] + pose_samples[:, 0:3]
+    orientations_delta = math_utils.quat_from_euler_xyz(pose_samples[:, 3], pose_samples[:, 4], pose_samples[:, 5])
+    orientations = math_utils.quat_mul(root_states[:, 3:7], orientations_delta)
+    velocities = root_states[:, 7:13] + velocity_samples
+
+    asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
+    asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
 
 
 def corridor_state(
@@ -258,6 +322,17 @@ def recovery_memory_state(
     )
 
 
+def zero_recovery_memory_state(
+    env,
+    corridor_width: float,
+    estimated_d_min: float = DEFAULT_ESTIMATED_D_MIN,
+    asset_name: str = "robot",
+):
+    """Keep the recovery-memory observation shape but remove memory information."""
+    del corridor_width, estimated_d_min, asset_name
+    return torch.zeros(env.num_envs, 5, device=env.device)
+
+
 def recovery_progress_reward(
     env,
     min_stuck_steps: float = 5.0,
@@ -269,6 +344,86 @@ def recovery_progress_reward(
     vx = robot.data.root_lin_vel_w[:, 0]
     was_stuck = memory["stuck_counter"] >= min_stuck_steps
     return torch.where(was_stuck, torch.clamp(vx, min=0.0, max=0.5), torch.zeros_like(vx))
+
+
+def heading_error_abs(env, asset_name: str = "robot"):
+    """Absolute yaw error relative to the corridor centerline heading."""
+    robot = env.scene[asset_name]
+    yaw = _yaw_from_quat_wxyz(robot.data.root_quat_w)
+    return torch.abs(yaw) / torch.pi
+
+
+def recovery_realign_reward(
+    env,
+    corridor_width: float,
+    goal_x: float,
+    yaw_weight: float = 0.65,
+    asset_name: str = "robot",
+):
+    """Reward reductions in lateral/yaw error inside the corridor."""
+    memory = reset_failure_memory(env)
+    robot = env.scene[asset_name]
+    pos = _local_root_pos(env, asset_name=asset_name)
+    x = pos[:, 0]
+    y = pos[:, 1]
+    yaw = _yaw_from_quat_wxyz(robot.data.root_quat_w)
+    half_w = max(corridor_width * 0.5, 1.0e-6)
+
+    error = torch.abs(y) / half_w + yaw_weight * torch.abs(yaw) / torch.pi
+    valid = (x > 0.0) & (x < goal_x)
+    improved = torch.clamp(memory["last_realign_error"] - error, min=0.0, max=0.25)
+    first_step = env.episode_length_buf <= 1
+    reward = torch.where(valid & (~first_step), improved, torch.zeros_like(error))
+    memory["last_realign_error"][:] = error
+    return reward
+
+
+def wall_escape_reward(
+    env,
+    corridor_width: float,
+    near_wall_threshold: float = 0.22,
+    asset_name: str = "robot",
+):
+    """Reward increasing clearance when the robot is near a wall."""
+    memory = reset_failure_memory(env)
+    pos = _local_root_pos(env, asset_name=asset_name)
+    y = pos[:, 1]
+    half_w = corridor_width * 0.5
+    clearance = half_w - torch.abs(y)
+    was_near = memory["last_clearance"] < near_wall_threshold
+    is_near = clearance < near_wall_threshold
+    first_step = env.episode_length_buf <= 1
+    improvement = torch.clamp(clearance - memory["last_clearance"], min=0.0, max=0.05) / max(near_wall_threshold, 1.0e-6)
+    reward = torch.where((was_near | is_near) & (~first_step), improvement, torch.zeros_like(clearance))
+    memory["last_clearance"][:] = clearance
+    return reward
+
+
+def centerline_velocity_reward(
+    env,
+    corridor_width: float,
+    near_wall_threshold: float = 0.24,
+    asset_name: str = "robot",
+):
+    """Reward lateral velocity that moves the base away from the nearest wall."""
+    robot = env.scene[asset_name]
+    pos = _local_root_pos(env, asset_name=asset_name)
+    y = pos[:, 1]
+    vy = robot.data.root_lin_vel_w[:, 1]
+    clearance = corridor_width * 0.5 - torch.abs(y)
+    toward_center_speed = -torch.sign(y) * vy
+    in_recovery_band = (torch.abs(y) > 0.06) | (clearance < near_wall_threshold)
+    return torch.where(in_recovery_band, torch.clamp(toward_center_speed, min=0.0, max=0.35), torch.zeros_like(vy))
+
+
+def yaw_correction_reward(env, asset_name: str = "robot"):
+    """Reward yaw rate that reduces absolute heading error."""
+    robot = env.scene[asset_name]
+    yaw = _yaw_from_quat_wxyz(robot.data.root_quat_w)
+    wz = robot.data.root_ang_vel_w[:, 2]
+    correcting_speed = -torch.sign(yaw) * wz
+    needs_correction = torch.abs(yaw) > 0.05
+    return torch.where(needs_correction, torch.clamp(correcting_speed, min=0.0, max=0.8), torch.zeros_like(wz))
 
 
 def oscillation_penalty(env):
