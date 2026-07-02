@@ -104,6 +104,19 @@ It exports the selected low-level gait checkpoint with
 `scripts/reinforcement_learning/rsl_rl/export_policy.py`, then launches
 `Isaac-Navigation-Narrow-Anymal-C-v0` high-level decision training.
 
+Validation entry point:
+
+```bash
+bash scripts/narrow_passage/validate_narrow_pipeline.sh
+```
+
+For a fast interface-only check:
+
+```bash
+RUN_WIDTH_SCAN=0 RUN_RECOVERY=0 RUN_DECISION_SMOKE=1 \
+  bash scripts/narrow_passage/validate_narrow_pipeline.sh
+```
+
 Checkpoint:
 
 ```bash

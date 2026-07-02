@@ -75,6 +75,33 @@ export ISAAC_NARROW_LOW_LEVEL_POLICY_PATH=/absolute/or/relative/path/to/exported
 The runner for these high-level tasks is `NarrowDecisionPPORunnerCfg`, and logs
 go under `logs/rsl_rl/anymal_c_narrow_decision/`.
 
+## Validate Current Pipeline
+
+Quick interface validation:
+
+```bash
+RUN_WIDTH_SCAN=0 RUN_RECOVERY=0 RUN_DECISION_SMOKE=1 \
+  bash scripts/narrow_passage/validate_narrow_pipeline.sh
+```
+
+Low-level-only validation:
+
+```bash
+RUN_DECISION_SMOKE=0 NUM_ENVS=32 MAX_STEPS=600 \
+  bash scripts/narrow_passage/validate_narrow_pipeline.sh
+```
+
+Full validation with the default width scan, left-wall recovery scenario, and
+one-iteration high-level interface smoke:
+
+```bash
+bash scripts/narrow_passage/validate_narrow_pipeline.sh
+```
+
+Outputs are written to `logs/narrow_passage_validation/` by default. Use
+`OUT_DIR=...`, `WIDTHS="0.75 0.85 0.95"`, `NUM_ENVS=...`, and `MAX_STEPS=...`
+to change the evaluation scale.
+
 ## Geometry Experiments
 
 Oracle geometry:
