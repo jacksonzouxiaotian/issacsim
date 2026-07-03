@@ -15,7 +15,7 @@ from isaaclab_assets.robots.anymal import ANYMAL_C_CFG
 
 @configclass
 class NarrowCorridorSceneCfg(InteractiveSceneCfg):
-    """ANYmal-C narrow corridor scene for manager-based navigation."""
+    """ANYmal-C narrow corridor scene for low-level locomotion control."""
 
     # ====== global scene ======
     ground = AssetBaseCfg(
@@ -32,7 +32,7 @@ class NarrowCorridorSceneCfg(InteractiveSceneCfg):
     )
 
     # ====== robot ======
-    # 名字必须叫 robot，因为导航任务和 action 配置都按这个名字引用
+    # 名字必须叫 robot，因为 locomotion task 和 action 配置都按这个名字引用
     robot = ANYMAL_C_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
     )

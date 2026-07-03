@@ -1,248 +1,171 @@
-# Running Experiments
+# Running Low-Level Narrow-Passage Locomotion Experiments
 
-This repository should be presented as:
+This repository is for low-level PPO locomotion control only:
 
-> Isaac Sim low-level narrow-passage traversal and recovery validation.
+> RL-based low-level quadruped locomotion control for narrow-passage traversal.
 
-It is not intended to carry the full evidence burden for a complete navigation
-paper. The learned policy is a low-level gait/recovery module.
+It does not train memory, high-level decision, or full navigation policies.
 
-## Main Checkpoints
+## Reward Definition
 
-Stage-1 straight narrow-passage gait:
-
-```bash
-logs/rsl_rl/anymal_c_narrow_gait/2026-06-30_15-57-59_low_level_gait_width085_stage1/model_299.pt
-```
-
-Staged recovery curriculum:
+Edit reward helpers in:
 
 ```bash
-logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_09-59-07_staged_memory_mild_v1/model_498.pt
-logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_10-02-47_staged_memory_medium_v1/model_697.pt
-logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_10-07-24_staged_memory_hard_v1/model_896.pt
+source/isaaclab_tasks/isaaclab_tasks/manager_based/navigation/config/anymal_c_narrow/mdp_narrow.py
 ```
 
-Current hard recovery checkpoint is not yet publication-clean as a main
-contribution: clean SR is below 70% on the tested recovery scenarios.
-
-## Export Low-Level Executor for High-Level Training
-
-The high-level decision tasks use `PreTrainedPolicyAction`, which loads a
-TorchScript/JIT `policy.pt`. It cannot load raw RSL-RL `model_*.pt`
-checkpoints directly.
-
-The complete one-command entry point is:
+Edit reward terms and weights in:
 
 ```bash
-bash scripts/narrow_passage/train_decision_with_gait.sh
+source/isaaclab_tasks/isaaclab_tasks/manager_based/navigation/config/anymal_c_narrow/narrow_gait_env_cfg.py
 ```
 
-Useful overrides:
+The main config class is `NarrowGaitEnvCfg`. The reward is composed of:
 
-```bash
-NUM_ENVS=1024 MAX_ITERATIONS=400 DEVICE=cuda:0 \
-  bash scripts/narrow_passage/train_decision_with_gait.sh
-```
+- `forward_progress`: positive x-direction progress;
+- `success_bonus`: clean goal reached without collision/fall/wedge;
+- `centerline_penalty`: lateral deviation from passage centerline;
+- `unsafe_clearance`: near-wall safety penalty;
+- `undesired_contacts` and `failure_termination`: collision avoidance;
+- `yaw_alignment`: heading alignment with the corridor;
+- `flat_orientation_l2` and `base_height`: stability;
+- `action_rate_l2`, `dof_torques_l2`, `dof_acc_l2`: smoothness/effort;
+- `time_penalty`: discourages slow traversal.
 
-Export the current low-level recovery executor:
+No reward term depends on failure memory or history counters.
 
-```bash
-conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/export_policy.py \
-  --task Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0 \
-  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_16-17-04_staged_memory_near_wall_clean_v1/model_1743.pt \
-  --output_dir logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_16-17-04_staged_memory_near_wall_clean_v1/exported \
-  --num_envs 1 \
-  --headless \
-  --device cuda:0
-```
+## Curriculum Plan
 
-After export, high-level decision training can use:
+Stage 1: wide straight passage.
+
+- Width: `0.95m-1.10m`.
+- Reset: entrance start, `x=(-0.9,-0.5)`, `y=(-0.03,0.03)`, `yaw=(-0.05,0.05)`.
+- Reward: emphasize forward progress and stability, mild clearance penalty.
+- Train: 800-1500 PPO iterations.
+- Checkpoint name: `low_level_stage1_wide_straight`.
+
+Stage 2: medium narrow passage.
+
+- Width: `0.85m-0.95m`.
+- Reset: entrance start, `y=(-0.05,0.05)`, `yaw=(-0.10,0.10)`.
+- Reward: increase centerline and clearance weights.
+- Train: 400-800 additional iterations from Stage 1.
+- Checkpoint name: `low_level_stage2_medium_centerline`.
+
+Stage 3: narrow passage.
+
+- Width: `0.75m-0.85m`.
+- Reset: stronger entrance lateral/yaw noise.
+- Reward: stronger unsafe-clearance and collision penalties.
+- Train: 600-1000 additional iterations.
+- Checkpoint name: `low_level_stage3_narrow_safety`.
+
+Stage 4: recovery-start training without memory.
+
+- Reset: near-wall and yawed initial states inside the corridor.
+- Observation: unchanged current-state proprioception + geometry only.
+- Reward: current-state centerline, clearance, yaw, forward progress, stability.
+- Train: 400-800 additional iterations.
+- Checkpoint name: `low_level_stage4_recovery_starts_current_state`.
+
+Stage 5: generalization testing.
+
+- Scenes: doorway, asymmetric obstacle, L-corridor.
+- No extra training required unless reporting a separate fine-tuned policy.
+- Metrics: clean success, collision, wedge, min clearance, yaw error, oscillation,
+  smoothness, and time to goal.
+
+## Train
 
 ```bash
 conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
-  --task Isaac-Navigation-Narrow-Anymal-C-v0 \
-  --headless --num_envs 2048 --max_iterations 800 \
-  --run_name decision_straight_with_narrow_gait_v1
-```
-
-For a different exported executor, set:
-
-```bash
-export ISAAC_NARROW_LOW_LEVEL_POLICY_PATH=/absolute/or/relative/path/to/exported/policy.pt
-```
-
-The runner for these high-level tasks is `NarrowDecisionPPORunnerCfg`, and logs
-go under `logs/rsl_rl/anymal_c_narrow_decision/`.
-
-## Validate Current Pipeline
-
-Quick interface validation:
-
-```bash
-RUN_WIDTH_SCAN=0 RUN_RECOVERY=0 RUN_DECISION_SMOKE=1 \
-  bash scripts/narrow_passage/validate_narrow_pipeline.sh
-```
-
-Low-level-only validation:
-
-```bash
-RUN_DECISION_SMOKE=0 NUM_ENVS=32 MAX_STEPS=600 \
-  bash scripts/narrow_passage/validate_narrow_pipeline.sh
-```
-
-Full validation with the default width scan, left-wall recovery scenario, and
-one-iteration high-level interface smoke:
-
-```bash
-bash scripts/narrow_passage/validate_narrow_pipeline.sh
-```
-
-Outputs are written to `logs/narrow_passage_validation/` by default. Use
-`OUT_DIR=...`, `WIDTHS="0.75 0.85 0.95"`, `NUM_ENVS=...`, and `MAX_STEPS=...`
-to change the evaluation scale.
-
-## Geometry Experiments
-
-Oracle geometry:
-
-```bash
-conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py \
-  --task Isaac-Narrow-Gait-OracleGeometry-Anymal-C-v0 \
-  --controller checkpoint \
-  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/2026-06-30_15-57-59_low_level_gait_width085_stage1/model_299.pt \
-  --widths 0.75 0.85 0.95 \
-  --num_envs 64 \
-  --max_steps 600 \
-  --output logs/narrow_passage_eval/oracle_geometry_width_scan.csv \
+  --task Isaac-Narrow-Gait-Anymal-C-v0 \
   --headless \
+  --num_envs 2048 \
+  --max_iterations 1500 \
+  --run_name low_level_stage1_wide_straight \
   --device cuda:0
 ```
 
-Sensor-estimated geometry:
-
-```bash
-conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py \
-  --task Isaac-Narrow-Gait-SensorEstimatedGeometry-Anymal-C-v0 \
-  --controller checkpoint \
-  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/2026-06-30_15-57-59_low_level_gait_width085_stage1/model_299.pt \
-  --widths 0.75 0.85 0.95 \
-  --num_envs 64 \
-  --max_steps 600 \
-  --output logs/narrow_passage_eval/sensor_estimated_geometry_width_scan.csv \
-  --headless \
-  --device cuda:0
-```
-
-## Recovery Curriculum Training
-
-Continue from stage-1 into staged recovery resets:
+Continue with recovery-start reset distributions:
 
 ```bash
 conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
   --task Isaac-Narrow-Gait-Recovery-Mild-Anymal-C-v0 \
-  --headless --num_envs 2048 --max_iterations 200 \
-  --resume --load_run 2026-06-30_15-57-59_low_level_gait_width085_stage1 \
-  --checkpoint model_299.pt \
-  --run_name staged_memory_mild_v2
+  --headless \
+  --num_envs 2048 \
+  --max_iterations 400 \
+  --resume \
+  --load_run <previous_run> \
+  --checkpoint <previous_checkpoint.pt> \
+  --run_name low_level_stage4_recovery_mild_current_state \
+  --device cuda:0
 ```
 
-```bash
-conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
-  --task Isaac-Narrow-Gait-Recovery-Medium-Anymal-C-v0 \
-  --headless --num_envs 2048 --max_iterations 200 \
-  --resume --load_run <mild_run_name> \
-  --checkpoint <mild_checkpoint.pt> \
-  --run_name staged_memory_medium_v2
-```
+## Evaluate
 
-```bash
-conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
-  --task Isaac-Narrow-Gait-Recovery-Hard-Anymal-C-v0 \
-  --headless --num_envs 2048 --max_iterations 400 \
-  --resume --load_run <medium_run_name> \
-  --checkpoint <medium_checkpoint.pt> \
-  --run_name staged_memory_hard_v2
-```
-
-Do not promote recovery as the main contribution until clean SR is at least
-70% on the clean recovery eval below.
-
-## Recovery Ablation
-
-w/o recovery:
+Width scan:
 
 ```bash
 conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py \
-  --task Isaac-Narrow-Gait-Anymal-C-v0 \
-  --controller checkpoint \
-  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/2026-06-30_15-57-59_low_level_gait_width085_stage1/model_299.pt \
-  --widths 0.85 \
+  --task Isaac-Narrow-Gait-OracleGeometry-Anymal-C-v0 \
+  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/<run>/model_<iter>.pt \
+  --scenarios nominal \
+  --widths 0.75 0.85 0.95 \
   --num_envs 64 \
   --max_steps 600 \
-  --recovery_scenario left_wall \
-  --output logs/narrow_passage_eval/ablation_left_wall_wo_recovery.csv \
+  --output logs/narrow_passage_eval/width_scan_oracle.csv \
   --headless \
   --device cuda:0
 ```
 
-w/ recovery:
+Recovery-start scenarios:
 
 ```bash
 conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py \
-  --task Isaac-Narrow-Gait-Recovery-Hard-NoMemory-Anymal-C-v0 \
-  --controller checkpoint \
-  --checkpoint <hard_no_memory_checkpoint.pt> \
+  --task Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0 \
+  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/<run>/model_<iter>.pt \
+  --scenarios left_wall_start right_wall_start yaw_left_start yaw_right_start \
   --widths 0.85 \
   --num_envs 64 \
   --max_steps 600 \
-  --recovery_scenario left_wall \
-  --output logs/narrow_passage_eval/ablation_left_wall_w_recovery.csv \
+  --output logs/narrow_passage_eval/recovery_starts.csv \
   --headless \
   --device cuda:0
 ```
 
-w/ recovery + memory:
+Generalization:
 
 ```bash
 conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py \
-  --task Isaac-Narrow-Gait-Recovery-Hard-Anymal-C-v0 \
-  --controller checkpoint \
-  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/2026-07-02_10-07-24_staged_memory_hard_v1/model_896.pt \
+  --task Isaac-Narrow-Gait-OracleGeometry-Anymal-C-v0 \
+  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/<run>/model_<iter>.pt \
+  --scenarios doorway asymmetric_obstacle L_corridor \
   --widths 0.85 \
   --num_envs 64 \
   --max_steps 600 \
-  --recovery_scenario left_wall \
-  --output logs/narrow_passage_eval/ablation_left_wall_w_recovery_memory.csv \
+  --output logs/narrow_passage_eval/generalization.csv \
   --headless \
   --device cuda:0
 ```
 
-## Generalization Table
+The evaluator writes:
 
-Scene entries:
+- per-trial CSV;
+- summary JSON;
+- markdown table.
+
+## Convenience Validation
 
 ```bash
-Isaac-Narrow-Gait-Generalization-Doorway-Anymal-C-v0
-Isaac-Narrow-Gait-Generalization-AsymmetricObstacle-Anymal-C-v0
-Isaac-Narrow-Gait-Generalization-LCorridor-Anymal-C-v0
+LOW_LEVEL_CHECKPOINT=logs/rsl_rl/anymal_c_narrow_gait/<memory_free_run>/model_<iter>.pt \
+  bash scripts/narrow_passage/validate_narrow_pipeline.sh
 ```
 
-Run each with the same evaluator and checkpoint, changing `--task` and
-`--output`. The L-corridor entry is currently a generalization scaffold; report
-it only after smoke testing and clean evaluation.
-
-## Baselines
-
-The evaluator includes `heuristic_dwb_like`, `heuristic_rpp_like`, and
-`heuristic_mppi_like`. These are simple local heuristics and must not be
-reported as real Nav2 DWB/RPP/MPPI. Use those names in tables unless real Nav2
-results are integrated.
-
-## Build Tables
+Fast check:
 
 ```bash
-python make_eval_tables.py \
-  --input_dir logs/narrow_passage_eval \
-  --output logs/narrow_passage_eval/eval_tables.md
+LOW_LEVEL_CHECKPOINT=logs/rsl_rl/anymal_c_narrow_gait/<memory_free_run>/model_<iter>.pt \
+  NUM_ENVS=4 MAX_STEPS=80 WIDTHS="0.85" RUN_RECOVERY=0 RUN_GENERALIZATION=0 \
+  bash scripts/narrow_passage/validate_narrow_pipeline.sh
 ```

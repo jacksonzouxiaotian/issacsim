@@ -1,12 +1,7 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Evaluate narrow-passage local traversal policies.
-
-This script is intentionally narrow in scope: it evaluates a local quadruped
-passage policy in Isaac Sim and writes the metrics needed for width sweeps,
-recovery ablations, and Delta-D calibration plots.
-"""
+"""Evaluate low-level narrow-passage quadruped locomotion policies."""
 
 from __future__ import annotations
 
@@ -22,45 +17,29 @@ import torch
 from isaaclab.app import AppLauncher
 
 
-parser = argparse.ArgumentParser(description="Evaluate narrow-passage local traversal policies.")
-parser.add_argument("--task", type=str, default="Isaac-Navigation-Narrow-Anymal-C-v0")
-parser.add_argument(
-    "--controller",
-    type=str,
-    default="heuristic_rpp_like",
-    choices=[
-        "heuristic_dwb_like",
-        "heuristic_rpp_like",
-        "heuristic_mppi_like",
-        "dwb",
-        "rpp",
-        "mppi",
-        "tebrl",
-        "checkpoint",
-    ],
-    help=(
-        "Use checkpoint for learned policies. The *_like controllers are simple local heuristics, "
-        "not real Nav2 DWB/RPP/MPPI implementations. Legacy aliases dwb/rpp/mppi are accepted."
-    ),
-)
-parser.add_argument("--checkpoint", type=str, default=None, help="RSL-RL checkpoint for controller=checkpoint/tebrl.")
+parser = argparse.ArgumentParser(description="Evaluate low-level narrow-passage locomotion control policies.")
+parser.add_argument("--task", type=str, default="Isaac-Narrow-Gait-OracleGeometry-Anymal-C-v0")
+parser.add_argument("--checkpoint", type=str, required=True, help="RSL-RL checkpoint for the low-level gait policy.")
 parser.add_argument("--widths", type=float, nargs="+", default=[0.75, 0.85, 0.95])
-parser.add_argument("--num_envs", type=int, default=64)
-parser.add_argument("--max_steps", type=int, default=220)
-parser.add_argument("--estimated_d_min", type=float, default=0.72)
-parser.add_argument("--safety_reject_margin", type=float, default=0.0)
 parser.add_argument(
-    "--recovery_scenario",
+    "--scenarios",
     type=str,
-    default="nominal",
-    choices=["nominal", "left_wall", "right_wall", "yaw_left", "yaw_right"],
+    nargs="+",
+    default=["nominal"],
+    choices=[
+        "nominal",
+        "left_wall_start",
+        "right_wall_start",
+        "yaw_left_start",
+        "yaw_right_start",
+        "doorway",
+        "asymmetric_obstacle",
+        "L_corridor",
+    ],
 )
-parser.add_argument(
-    "--zero_recovery_memory",
-    action="store_true",
-    default=False,
-    help="Zero the last 5 recovery-memory observation channels before policy inference.",
-)
+parser.add_argument("--num_envs", type=int, default=64)
+parser.add_argument("--max_steps", type=int, default=600)
+parser.add_argument("--estimated_d_min", type=float, default=0.72)
 parser.add_argument("--output", type=str, default="logs/narrow_passage_eval/metrics.csv")
 parser.add_argument("--seed", type=int, default=42)
 AppLauncher.add_app_launcher_args(parser)
@@ -78,17 +57,28 @@ import isaaclab_tasks  # noqa: F401, E402
 from isaaclab_tasks.utils import load_cfg_from_registry, parse_env_cfg  # noqa: E402
 
 
+GENERALIZATION_TASKS = {
+    "doorway": "Isaac-Narrow-Gait-Generalization-Doorway-Anymal-C-v0",
+    "asymmetric_obstacle": "Isaac-Narrow-Gait-Generalization-AsymmetricObstacle-Anymal-C-v0",
+    "L_corridor": "Isaac-Narrow-Gait-Generalization-LCorridor-Anymal-C-v0",
+}
+
+
 @dataclass
 class EvalStats:
     min_clearance: torch.Tensor
+    yaw_error_sum: torch.Tensor
+    action_rate_sum: torch.Tensor
+    action_rate_count: torch.Tensor
     oscillations: torch.Tensor
     last_lat_sign: torch.Tensor
+    last_actions: torch.Tensor
     completion_step: torch.Tensor
     done: torch.Tensor
-    success: torch.Tensor
+    raw_success: torch.Tensor
     collision: torch.Tensor
     wedge: torch.Tensor
-    rejected: torch.Tensor
+    fall: torch.Tensor
 
 
 def _local_root_pos(env):
@@ -109,8 +99,7 @@ def _set_param_width(cfg_obj, width):
             value.params["corridor_width"] = width
 
 
-def configure_straight_width(env_cfg, width):
-    """Update straight-corridor scene geometry and all width-aware term params."""
+def configure_width(env_cfg, width):
     if not hasattr(env_cfg.scene, "left_wall"):
         return
     length = env_cfg.scene.left_wall.spawn.size[0]
@@ -126,8 +115,8 @@ def configure_straight_width(env_cfg, width):
         _set_param_width(cfg_obj, width)
 
 
-def configure_recovery_scenario(env_cfg, width, scenario):
-    if scenario == "nominal":
+def configure_start_scenario(env_cfg, width, scenario):
+    if scenario in ("nominal", "doorway", "asymmetric_obstacle", "L_corridor"):
         return
     velocity_range = {
         "x": (0.0, 0.0),
@@ -137,108 +126,59 @@ def configure_recovery_scenario(env_cfg, width, scenario):
         "pitch": (0.0, 0.0),
         "yaw": (0.0, 0.0),
     }
-    pose_range = env_cfg.events.reset_base.params.get("pose_range", {})
-    if scenario == "left_wall":
-        pose_range["x"] = (1.2, 1.8)
-        pose_range["y"] = (width * 0.5 - 0.22, width * 0.5 - 0.16)
-        pose_range["yaw"] = (-0.25, -0.12)
-    elif scenario == "right_wall":
-        pose_range["x"] = (1.2, 1.8)
-        pose_range["y"] = (-(width * 0.5 - 0.22), -(width * 0.5 - 0.16))
-        pose_range["yaw"] = (0.12, 0.25)
-    elif scenario == "yaw_left":
-        pose_range["x"] = (0.6, 1.2)
-        pose_range["y"] = (-0.04, 0.04)
-        pose_range["yaw"] = (0.35, 0.55)
-    elif scenario == "yaw_right":
-        pose_range["x"] = (0.6, 1.2)
-        pose_range["y"] = (-0.04, 0.04)
-        pose_range["yaw"] = (-0.55, -0.35)
+    pose_range = {}
+    if scenario == "left_wall_start":
+        pose_range = {"x": (1.2, 1.8), "y": (width * 0.5 - 0.22, width * 0.5 - 0.16), "yaw": (-0.25, -0.12)}
+    elif scenario == "right_wall_start":
+        pose_range = {"x": (1.2, 1.8), "y": (-(width * 0.5 - 0.22), -(width * 0.5 - 0.16)), "yaw": (0.12, 0.25)}
+    elif scenario == "yaw_left_start":
+        pose_range = {"x": (0.6, 1.2), "y": (-0.04, 0.04), "yaw": (0.35, 0.55)}
+    elif scenario == "yaw_right_start":
+        pose_range = {"x": (0.6, 1.2), "y": (-0.04, 0.04), "yaw": (-0.55, -0.35)}
+
     if "pose_range" in env_cfg.events.reset_base.params:
         env_cfg.events.reset_base.params["pose_range"] = pose_range
+        env_cfg.events.reset_base.params["velocity_range"] = velocity_range
     elif "cases" in env_cfg.events.reset_base.params:
         env_cfg.events.reset_base.params["cases"] = (
             {"weight": 1.0, "pose_range": pose_range, "velocity_range": velocity_range},
         )
 
 
-def heuristic_actions(env, controller, width):
-    """Return local velocity commands for simple local baselines."""
-    controller = controller.replace("heuristic_", "").replace("_like", "")
-    robot = env.scene["robot"]
-    pos = _local_root_pos(env)
-    x = pos[:, 0]
-    y = pos[:, 1]
-    yaw = _yaw_from_quat_wxyz(robot.data.root_quat_w)
-
-    if controller == "dwb":
-        v = torch.full_like(x, 0.32)
-        lat = torch.clamp(-0.65 * y, -0.18, 0.18)
-        wz = torch.clamp(-0.9 * yaw - 0.35 * y, -0.45, 0.45)
-    elif controller == "mppi":
-        candidates = [
-            (0.25, -0.25),
-            (0.35, -0.10),
-            (0.45, 0.0),
-            (0.35, 0.10),
-            (0.25, 0.25),
-        ]
-        best_score = torch.full_like(x, -1.0e9)
-        best_v = torch.zeros_like(x)
-        best_lat = torch.zeros_like(x)
-        for v_c, lat_c in candidates:
-            next_y = y + 0.25 * lat_c
-            clearance = width * 0.5 - torch.abs(next_y)
-            score = 1.2 * v_c + 1.8 * clearance - 0.2 * torch.abs(next_y)
-            update = score > best_score
-            best_score[update] = score[update]
-            best_v[update] = v_c
-            best_lat[update] = lat_c
-        v = best_v
-        lat = best_lat
-        wz = torch.clamp(-0.8 * yaw - 0.25 * y, -0.5, 0.5)
-    else:
-        v = torch.full_like(x, 0.48 if controller == "rpp" else 0.42)
-        lat = torch.clamp(-0.85 * y, -0.25, 0.25)
-        wz = torch.clamp(-1.1 * yaw - 0.45 * y, -0.55, 0.55)
-
-    near_goal = x > 9.2
-    v = torch.where(near_goal, torch.minimum(v, torch.full_like(v, 0.20)), v)
-    return torch.stack([v, lat, wz], dim=-1)
-
-
-def get_checkpoint_policy(wrapped_env, task, checkpoint):
-    if checkpoint is None:
-        raise ValueError("--checkpoint is required for controller=checkpoint/tebrl")
-    agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
-    runner = OnPolicyRunner(wrapped_env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    runner.load(checkpoint)
-    return runner.get_inference_policy(device=wrapped_env.unwrapped.device)
-
-
-def make_stats(num_envs, device, rejected):
+def make_stats(num_envs, num_actions, device):
     return EvalStats(
         min_clearance=torch.full((num_envs,), 1.0e9, device=device),
+        yaw_error_sum=torch.zeros(num_envs, device=device),
+        action_rate_sum=torch.zeros(num_envs, device=device),
+        action_rate_count=torch.zeros(num_envs, device=device),
         oscillations=torch.zeros(num_envs, device=device),
         last_lat_sign=torch.zeros(num_envs, device=device),
+        last_actions=torch.zeros(num_envs, num_actions, device=device),
         completion_step=torch.full((num_envs,), -1, dtype=torch.long, device=device),
         done=torch.zeros(num_envs, dtype=torch.bool, device=device),
-        success=torch.zeros(num_envs, dtype=torch.bool, device=device),
+        raw_success=torch.zeros(num_envs, dtype=torch.bool, device=device),
         collision=torch.zeros(num_envs, dtype=torch.bool, device=device),
         wedge=torch.zeros(num_envs, dtype=torch.bool, device=device),
-        rejected=torch.full((num_envs,), rejected, dtype=torch.bool, device=device),
+        fall=torch.zeros(num_envs, dtype=torch.bool, device=device),
     )
 
 
-def update_stats(stats, env, width, step_idx):
+def update_stats(stats, env, width, actions, step_idx):
     active_mask = ~stats.done
     if not bool(active_mask.any()):
         return
 
-    pos = _local_root_pos(env)
     robot = env.scene["robot"]
+    pos = _local_root_pos(env)
+    yaw_error = torch.abs(_yaw_from_quat_wxyz(robot.data.root_quat_w))
     clearance = width * 0.5 - torch.abs(pos[:, 1])
     stats.min_clearance[active_mask] = torch.minimum(stats.min_clearance[active_mask], clearance[active_mask])
+    stats.yaw_error_sum[active_mask] += yaw_error[active_mask]
+
+    action_delta = torch.linalg.norm(actions - stats.last_actions, dim=1)
+    stats.action_rate_sum[active_mask] += action_delta[active_mask]
+    stats.action_rate_count[active_mask] += 1.0
+    stats.last_actions[active_mask] = actions[active_mask]
 
     lat_sign = torch.sign(robot.data.root_lin_vel_w[:, 1])
     changed = (lat_sign != 0.0) & (stats.last_lat_sign != 0.0) & (lat_sign != stats.last_lat_sign)
@@ -250,16 +190,20 @@ def update_stats(stats, env, width, step_idx):
     near_wall = clearance < 0.06
     stats.wedge |= active_mask & near_wall & (speed < 0.035) & (env.episode_length_buf > 12)
 
-    active = set(env.termination_manager.active_terms)
-    if "goal_reached" in active:
-        stats.success |= active_mask & env.termination_manager.get_term("goal_reached")
-    if "base_contact" in active:
+    active_terms = set(env.termination_manager.active_terms)
+    if "goal_reached" in active_terms:
+        stats.raw_success |= active_mask & env.termination_manager.get_term("goal_reached")
+    if "base_contact" in active_terms:
         stats.collision |= active_mask & env.termination_manager.get_term("base_contact")
-    if "bad_orientation" in active:
-        stats.collision |= active_mask & env.termination_manager.get_term("bad_orientation")
-    if "base_too_low" in active:
-        stats.collision |= active_mask & env.termination_manager.get_term("base_too_low")
-    if "stuck" in active:
+    if "bad_orientation" in active_terms:
+        bad_orientation = env.termination_manager.get_term("bad_orientation")
+        stats.fall |= active_mask & bad_orientation
+        stats.collision |= active_mask & bad_orientation
+    if "base_too_low" in active_terms:
+        base_low = env.termination_manager.get_term("base_too_low")
+        stats.fall |= active_mask & base_low
+        stats.collision |= active_mask & base_low
+    if "stuck" in active_terms:
         stats.wedge |= active_mask & env.termination_manager.get_term("stuck")
 
     just_done = env.reset_buf & active_mask
@@ -267,103 +211,171 @@ def update_stats(stats, env, width, step_idx):
     stats.completion_step[just_done] = step_idx
 
 
-def summarize(rows):
-    by_width = {}
-    for row in rows:
-        width = row["width"]
-        by_width.setdefault(width, []).append(row)
-    summary = {}
-    for width, items in by_width.items():
-        n = max(len(items), 1)
-        summary[f"SR@{int(round(width * 100))}"] = sum(i["success"] for i in items) / n
-        summary[f"wedge@{int(round(width * 100))}"] = sum(i["wedge"] for i in items) / n
-        summary[f"reject@{int(round(width * 100))}"] = sum(i["rejected"] for i in items) / n
-        summary[f"collision@{int(round(width * 100))}"] = sum(i["collision"] for i in items) / n
-    return summary
+def get_policy(wrapped_env, task, checkpoint):
+    agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
+    runner = OnPolicyRunner(wrapped_env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+    runner.load(checkpoint)
+    return runner.get_inference_policy(device=wrapped_env.unwrapped.device)
 
 
-def run_width(width):
-    env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs)
+def run_eval(task, scenario, width):
+    task_name = GENERALIZATION_TASKS.get(scenario, task)
+    env_cfg = parse_env_cfg(task_name, device=args_cli.device, num_envs=args_cli.num_envs)
     env_cfg.seed = args_cli.seed
-    configure_straight_width(env_cfg, width)
-    configure_recovery_scenario(env_cfg, width, args_cli.recovery_scenario)
-    env = gym.make(args_cli.task, cfg=env_cfg)
-    wrapped = RslRlVecEnvWrapper(env)
-    policy = None
-    if args_cli.controller in ("checkpoint", "tebrl"):
-        policy = get_checkpoint_policy(wrapped, args_cli.task, args_cli.checkpoint)
+    configure_width(env_cfg, width)
+    configure_start_scenario(env_cfg, width, scenario)
 
-    rejected = width < (args_cli.estimated_d_min + args_cli.safety_reject_margin)
-    stats = make_stats(wrapped.num_envs, wrapped.device, rejected)
+    env = gym.make(task_name, cfg=env_cfg)
+    wrapped = RslRlVecEnvWrapper(env)
+    policy = get_policy(wrapped, task_name, args_cli.checkpoint)
+    stats = make_stats(wrapped.num_envs, wrapped.num_actions, wrapped.device)
+
     obs = wrapped.get_observations()
-    if rejected:
-        actions = torch.zeros(wrapped.num_envs, wrapped.num_actions, device=wrapped.device)
-        stats.done[:] = True
-        stats.completion_step[:] = 0
-    else:
-        for step_idx in range(args_cli.max_steps):
-            with torch.inference_mode():
-                if policy is None:
-                    actions = heuristic_actions(wrapped.unwrapped, args_cli.controller, width)
-                else:
-                    if args_cli.zero_recovery_memory and "policy" in obs:
-                        obs["policy"][:, -5:] = 0.0
-                    actions = policy(obs)
-                obs, _, _, _ = wrapped.step(actions)
-            update_stats(stats, wrapped.unwrapped, width, step_idx + 1)
-            if bool(stats.done.all()):
-                break
+    for step_idx in range(args_cli.max_steps):
+        with torch.inference_mode():
+            actions = policy(obs)
+            obs, _, _, _ = wrapped.step(actions)
+        update_stats(stats, wrapped.unwrapped, width, actions, step_idx + 1)
+        if bool(stats.done.all()):
+            break
 
     rows = []
     dt = wrapped.unwrapped.step_dt
     for env_id in range(wrapped.num_envs):
         step_count = int(stats.completion_step[env_id].item())
-        if step_count < 0:
+        timeout = step_count < 0
+        if timeout:
             step_count = args_cli.max_steps
-        raw_success = bool(stats.success[env_id].item())
+        raw_success = bool(stats.raw_success[env_id].item())
         collision = bool(stats.collision[env_id].item())
         wedge = bool(stats.wedge[env_id].item())
-        rejected = bool(stats.rejected[env_id].item())
-        clean_success = raw_success and not collision and not wedge and not rejected
+        fall = bool(stats.fall[env_id].item())
+        clean_success = raw_success and not collision and not wedge and not fall
+        count = max(float(stats.action_rate_count[env_id].item()), 1.0)
         rows.append(
             {
-                "controller": args_cli.controller,
-                "scenario": args_cli.recovery_scenario,
-                "zero_recovery_memory": int(args_cli.zero_recovery_memory),
+                "task": task_name,
+                "scenario": scenario,
                 "width": float(width),
                 "delta_d": float(width - args_cli.estimated_d_min),
                 "trial": env_id,
-                "success": int(clean_success),
+                "clean_success": int(clean_success),
                 "raw_success": int(raw_success),
                 "collision": int(collision),
                 "wedge": int(wedge),
-                "rejected": int(rejected),
-                "oscillation_count": float(stats.oscillations[env_id].item()),
-                "completion_time": float(step_count * dt),
+                "timeout": int(timeout),
+                "fall": int(fall),
+                "time_to_goal": float(step_count * dt),
                 "min_clearance": float(stats.min_clearance[env_id].item()),
+                "yaw_error_mean": float(stats.yaw_error_sum[env_id].item() / count),
+                "oscillation_count": float(stats.oscillations[env_id].item()),
+                "action_smoothness": float(stats.action_rate_sum[env_id].item() / count),
             }
         )
     wrapped.close()
     return rows
 
 
+def summarize(rows):
+    groups = {}
+    for row in rows:
+        key = (row["scenario"], row["width"])
+        groups.setdefault(key, []).append(row)
+
+    summary_rows = []
+    for (scenario, width), items in sorted(groups.items()):
+        n = max(len(items), 1)
+        complete_times = [item["time_to_goal"] for item in items if item["raw_success"]]
+        summary_rows.append(
+            {
+                "scenario": scenario,
+                "width": width,
+                "num_trials": n,
+                "clean_success_rate": sum(item["clean_success"] for item in items) / n,
+                "raw_success_rate": sum(item["raw_success"] for item in items) / n,
+                "collision_rate": sum(item["collision"] for item in items) / n,
+                "wedge_rate": sum(item["wedge"] for item in items) / n,
+                "timeout_rate": sum(item["timeout"] for item in items) / n,
+                "mean_time_to_goal": sum(complete_times) / max(len(complete_times), 1),
+                "min_clearance_mean": sum(item["min_clearance"] for item in items) / n,
+                "min_clearance_min": min(item["min_clearance"] for item in items),
+                "yaw_error_mean": sum(item["yaw_error_mean"] for item in items) / n,
+                "oscillation_count": sum(item["oscillation_count"] for item in items) / n,
+                "action_smoothness": sum(item["action_smoothness"] for item in items) / n,
+                "fall_rate": sum(item["fall"] for item in items) / n,
+            }
+        )
+    return summary_rows
+
+
+def write_markdown(summary_rows, path):
+    headers = [
+        "scenario",
+        "width",
+        "clean_SR",
+        "raw_SR",
+        "collision",
+        "wedge",
+        "timeout",
+        "time",
+        "clear_mean",
+        "clear_min",
+        "yaw",
+        "osc",
+        "smooth",
+        "fall",
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("| " + " | ".join(headers) + " |\n")
+        f.write("|" + "|".join([" --- " for _ in headers]) + "|\n")
+        for row in summary_rows:
+            f.write(
+                "| "
+                + " | ".join(
+                    [
+                        str(row["scenario"]),
+                        f"{row['width']:.2f}",
+                        f"{row['clean_success_rate']:.4f}",
+                        f"{row['raw_success_rate']:.4f}",
+                        f"{row['collision_rate']:.4f}",
+                        f"{row['wedge_rate']:.4f}",
+                        f"{row['timeout_rate']:.4f}",
+                        f"{row['mean_time_to_goal']:.3f}",
+                        f"{row['min_clearance_mean']:.3f}",
+                        f"{row['min_clearance_min']:.3f}",
+                        f"{row['yaw_error_mean']:.3f}",
+                        f"{row['oscillation_count']:.2f}",
+                        f"{row['action_smoothness']:.3f}",
+                        f"{row['fall_rate']:.4f}",
+                    ]
+                )
+                + " |\n"
+            )
+
+
 def main():
     os.makedirs(os.path.dirname(args_cli.output), exist_ok=True)
     all_rows = []
-    for width in args_cli.widths:
-        print(f"[INFO] Evaluating width={width:.3f} controller={args_cli.controller}")
-        all_rows.extend(run_width(width))
+    for scenario in args_cli.scenarios:
+        for width in args_cli.widths:
+            print(f"[INFO] Evaluating scenario={scenario} width={width:.3f}")
+            all_rows.extend(run_eval(args_cli.task, scenario, width))
 
     with open(args_cli.output, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(all_rows[0].keys()))
         writer.writeheader()
         writer.writerows(all_rows)
 
+    summary_rows = summarize(all_rows)
     summary_path = os.path.splitext(args_cli.output)[0] + "_summary.json"
+    table_path = os.path.splitext(args_cli.output)[0] + "_table.md"
     with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(summarize(all_rows), f, indent=2)
-    print(f"[INFO] Wrote metrics to {args_cli.output}")
-    print(f"[INFO] Wrote summary to {summary_path}")
+        json.dump(summary_rows, f, indent=2)
+    write_markdown(summary_rows, table_path)
+
+    print(f"[INFO] Wrote per-trial metrics to {args_cli.output}")
+    print(f"[INFO] Wrote summary JSON to {summary_path}")
+    print(f"[INFO] Wrote markdown table to {table_path}")
 
 
 if __name__ == "__main__":

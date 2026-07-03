@@ -6,7 +6,7 @@
 """Custom corridor scene generator for IsaacLab.
 
 This module provides functions to generate a narrow corridor environment
-for training robot navigation.
+for low-level quadruped locomotion-control training.
 """
 
 import omni.isaac.core.utils.prims as prim_utils

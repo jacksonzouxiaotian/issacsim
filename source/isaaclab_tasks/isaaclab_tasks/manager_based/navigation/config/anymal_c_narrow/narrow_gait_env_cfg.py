@@ -1,11 +1,11 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Low-level narrow-passage gait task for ANYmal-C.
+"""Low-level narrow-passage locomotion control task for ANYmal-C.
 
-Unlike the navigation configs in this package, this task trains the gait policy
-directly. The action is joint position targets, not a velocity command sent to a
-pre-trained locomotion policy.
+This task trains the quadruped controller directly with PPO. The action is a
+12D joint position target. The policy observes proprioception and compact local
+geometry; it does not use memory or a high-level navigation policy.
 """
 
 import isaaclab.sim as sim_utils
@@ -299,7 +299,7 @@ class NarrowGaitEnvCfg(AnymalCFlatEnvCfg):
         )
         self.events.push_robot = None
 
-        # Add narrow-passage geometry and short failure memory to the gait policy observation.
+        # Add compact local geometry to the gait policy observation.
         self.observations.policy.corridor_state = ObsTerm(
             func=narrow_mdp.corridor_state,
             params={
@@ -308,51 +308,46 @@ class NarrowGaitEnvCfg(AnymalCFlatEnvCfg):
                 "estimated_d_min": ESTIMATED_D_MIN,
             },
         )
-        self.observations.policy.recovery_memory = ObsTerm(
-            func=narrow_mdp.recovery_memory_state,
-            params={
-                "corridor_width": CORRIDOR_WIDTH,
-                "estimated_d_min": ESTIMATED_D_MIN,
-            },
-        )
         self.observations.policy.enable_corruption = True
         self.observations.policy.base_lin_vel.noise = Unoise(n_min=-0.08, n_max=0.08)
         self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.15, n_max=0.15)
 
         # Retune locomotion rewards for narrow-passage gait rather than generic velocity tracking.
-        self.rewards.track_lin_vel_xy_exp.weight = 1.5
+        self.rewards.track_lin_vel_xy_exp.weight = 1.0
         self.rewards.track_lin_vel_xy_exp.params["std"] = 0.35
-        self.rewards.track_ang_vel_z_exp.weight = 0.25
+        self.rewards.track_ang_vel_z_exp.weight = 0.15
         self.rewards.flat_orientation_l2.weight = -4.0
         self.rewards.feet_air_time.weight = 0.35
         self.rewards.dof_torques_l2.weight = -2.5e-5
         self.rewards.action_rate_l2.weight = -0.02
-        self.rewards.undesired_contacts.weight = -2.0
+        self.rewards.undesired_contacts.weight = -5.0
 
-        self.rewards.forward_progress = RewTerm(func=narrow_mdp.forward_progress_reward, weight=2.5)
+        self.rewards.forward_progress = RewTerm(func=narrow_mdp.forward_progress_reward, weight=4.0)
         self.rewards.centerline_penalty = RewTerm(
             func=narrow_mdp.centerline_error_l1,
-            weight=-2.0,
+            weight=-3.0,
             params={"corridor_width": CORRIDOR_WIDTH},
         )
         self.rewards.unsafe_clearance = RewTerm(
             func=narrow_mdp.unsafe_clearance_penalty,
-            weight=-2.0,
-            params={"corridor_width": CORRIDOR_WIDTH, "safety_margin": 0.08},
+            weight=-8.0,
+            params={"corridor_width": CORRIDOR_WIDTH, "safety_margin": 0.14},
         )
-        self.rewards.stuck_penalty = RewTerm(
-            func=narrow_mdp.stuck_penalty,
-            weight=-4.0,
-            params={"min_forward_speed": 0.04, "goal_x": GOAL_X},
+        self.rewards.yaw_alignment = RewTerm(func=narrow_mdp.heading_error_abs, weight=-4.0)
+        self.rewards.lateral_velocity = RewTerm(func=narrow_mdp.lateral_velocity_penalty, weight=-0.8)
+        self.rewards.base_height = RewTerm(
+            func=narrow_mdp.base_height_error_l1,
+            weight=-1.5,
+            params={"target_height": 0.50},
         )
-        self.rewards.recovery_progress = RewTerm(
-            func=narrow_mdp.recovery_progress_reward,
-            weight=2.0,
-            params={"min_stuck_steps": 5.0},
+        self.rewards.time_penalty = RewTerm(
+            func=narrow_mdp.unfinished_time_penalty,
+            weight=-0.04,
+            params={"goal_x": GOAL_X},
         )
         self.rewards.success_bonus = RewTerm(
             func=narrow_mdp.clean_goal_reached_bonus,
-            weight=180.0,
+            weight=220.0,
             params={
                 "goal_x": GOAL_X,
                 "tol": GOAL_TOL,
@@ -360,7 +355,7 @@ class NarrowGaitEnvCfg(AnymalCFlatEnvCfg):
                 "lateral_margin": 0.08,
             },
         )
-        self.rewards.failure_termination = RewTerm(func=narrow_mdp.failure_termination_penalty, weight=-80.0)
+        self.rewards.failure_termination = RewTerm(func=narrow_mdp.failure_termination_penalty, weight=-250.0)
 
         self.terminations.goal_reached = DoneTerm(
             func=narrow_mdp.goal_reached,
@@ -472,8 +467,8 @@ class NarrowGaitGeneralizationAsymmetricObstacleEnvCfg(NarrowGaitSensorEstimated
 class NarrowGaitGeneralizationLCorridorEnvCfg(NarrowGaitSensorEstimatedGeometryEnvCfg):
     """L-turn scene entry for generalization experiments.
 
-    The low-level policy still observes compact local geometry; this scene is an
-    evaluation scaffold and should not be reported as validated until evaluated.
+    The low-level policy observes compact local geometry; this scene is an
+    evaluation scaffold for locomotion-control generalization.
     """
 
     def __post_init__(self):
@@ -500,7 +495,7 @@ class NarrowGaitGeneralizationLCorridorEnvCfg(NarrowGaitSensorEstimatedGeometryE
 
 @configclass
 class NarrowGaitRecoveryEnvCfg(NarrowGaitEnvCfg):
-    """Fine-tuning task that mixes entrance traversal with in-corridor recovery starts."""
+    """Fine-tuning task that mixes entrance traversal with near-wall/yawed starts."""
 
     recovery_reset_cases = RECOVERY_RESET_HARD_CASES
 
@@ -518,24 +513,22 @@ class NarrowGaitRecoveryEnvCfg(NarrowGaitEnvCfg):
         self.commands.base_velocity.ranges.ang_vel_z = (-0.03, 0.03)
         self.commands.base_velocity.ranges.heading = (-0.05, 0.05)
 
-        self.rewards.track_lin_vel_xy_exp.weight = 1.1
-        self.rewards.forward_progress.weight = 1.2
+        self.rewards.track_lin_vel_xy_exp.weight = 0.9
+        self.rewards.forward_progress.weight = 2.0
         self.rewards.centerline_penalty.weight = -5.0
         self.rewards.unsafe_clearance.weight = -10.0
         self.rewards.unsafe_clearance.params["safety_margin"] = 0.22
-        self.rewards.stuck_penalty.weight = -8.0
-        self.rewards.recovery_progress.weight = 4.0
-        self.rewards.success_bonus.weight = 120.0
+        self.rewards.success_bonus.weight = 180.0
         self.rewards.failure_termination.weight = -320.0
         self.rewards.heading_alignment = RewTerm(func=narrow_mdp.heading_error_abs, weight=-4.0)
-        self.rewards.recovery_realign = RewTerm(
+        self.rewards.current_realign = RewTerm(
             func=narrow_mdp.recovery_realign_reward,
-            weight=14.0,
+            weight=6.0,
             params={"corridor_width": CORRIDOR_WIDTH, "goal_x": GOAL_X},
         )
-        self.rewards.wall_escape = RewTerm(
+        self.rewards.clearance_recovery = RewTerm(
             func=narrow_mdp.wall_escape_reward,
-            weight=10.0,
+            weight=5.0,
             params={"corridor_width": CORRIDOR_WIDTH, "near_wall_threshold": 0.24},
         )
         self.rewards.centerline_velocity = RewTerm(
@@ -544,7 +537,7 @@ class NarrowGaitRecoveryEnvCfg(NarrowGaitEnvCfg):
             params={"corridor_width": CORRIDOR_WIDTH, "near_wall_threshold": 0.24},
         )
         self.rewards.yaw_correction = RewTerm(func=narrow_mdp.yaw_correction_reward, weight=3.0)
-        self.rewards.oscillation = RewTerm(func=narrow_mdp.oscillation_penalty, weight=-0.5)
+        self.rewards.lateral_velocity.weight = -1.2
 
         self.terminations.stuck.params["window_s"] = 1.4
         self.terminations.stuck.params["min_forward_speed"] = 0.025
@@ -575,13 +568,12 @@ class NarrowGaitRecoveryHardCleanRewardEnvCfg(NarrowGaitRecoveryHardEnvCfg):
         self.rewards.forward_progress.weight = 0.8
         self.rewards.undesired_contacts.weight = -4.0
         self.rewards.unsafe_clearance.weight = -16.0
-        self.rewards.stuck_penalty.weight = -10.0
         self.rewards.success_bonus.weight = 170.0
         self.rewards.failure_termination.weight = -650.0
-        self.rewards.wall_escape.weight = 12.0
+        self.rewards.clearance_recovery.weight = 12.0
         self.rewards.centerline_velocity.weight = 8.0
         self.rewards.yaw_correction.weight = 2.0
-        self.rewards.oscillation.weight = -0.8
+        self.rewards.lateral_velocity.weight = -1.5
 
 
 @configclass
@@ -600,11 +592,11 @@ class NarrowGaitRecoveryBalancedCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnv
             params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.16, "max_abs_yaw": 0.35},
         )
         self.rewards.heading_alignment.weight = -7.0
-        self.rewards.recovery_realign.weight = 18.0
-        self.rewards.wall_escape.weight = 14.0
+        self.rewards.current_realign.weight = 10.0
+        self.rewards.clearance_recovery.weight = 14.0
         self.rewards.centerline_velocity.weight = 10.0
         self.rewards.yaw_correction.weight = 4.0
-        self.rewards.oscillation.weight = -1.0
+        self.rewards.lateral_velocity.weight = -1.8
 
 
 @configclass
@@ -626,16 +618,16 @@ class NarrowGaitRecoveryYawCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnvCfg):
         )
         self.rewards.centerline_penalty.weight = -3.5
         self.rewards.heading_alignment.weight = -10.0
-        self.rewards.recovery_realign.weight = 16.0
+        self.rewards.current_realign.weight = 10.0
         self.rewards.yaw_realign = RewTerm(
             func=narrow_mdp.yaw_realign_progress_reward,
-            weight=24.0,
+            weight=8.0,
             params={"goal_x": GOAL_X},
         )
         self.rewards.yaw_correction.weight = 7.0
         self.rewards.centerline_velocity.weight = 6.0
-        self.rewards.wall_escape.weight = 8.0
-        self.rewards.oscillation.weight = -1.2
+        self.rewards.clearance_recovery.weight = 8.0
+        self.rewards.lateral_velocity.weight = -2.0
 
 
 @configclass
@@ -655,12 +647,12 @@ class NarrowGaitRecoveryNearWallCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnv
         )
         self.rewards.centerline_penalty.weight = -4.0
         self.rewards.unsafe_clearance.weight = -20.0
-        self.rewards.recovery_realign.weight = 18.0
-        self.rewards.wall_escape.weight = 20.0
+        self.rewards.current_realign.weight = 12.0
+        self.rewards.clearance_recovery.weight = 20.0
         self.rewards.centerline_velocity.weight = 14.0
         self.rewards.heading_alignment.weight = -5.0
         self.rewards.yaw_correction.weight = 3.0
-        self.rewards.oscillation.weight = -0.8
+        self.rewards.lateral_velocity.weight = -1.6
 
 
 @configclass
@@ -680,46 +672,7 @@ class NarrowGaitRecoveryHardSensorEstimatedGeometryEnvCfg(NarrowGaitRecoveryEnvC
 
 
 @configclass
-class NarrowGaitRecoveryNoMemoryEnvCfg(NarrowGaitRecoveryEnvCfg):
-    """Recovery curriculum with memory channels zeroed for ablation training."""
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.observations.policy.recovery_memory = ObsTerm(
-            func=narrow_mdp.zero_recovery_memory_state,
-            params={
-                "corridor_width": CORRIDOR_WIDTH,
-                "estimated_d_min": ESTIMATED_D_MIN,
-            },
-        )
-
-
-@configclass
-class NarrowGaitRecoveryMildNoMemoryEnvCfg(NarrowGaitRecoveryNoMemoryEnvCfg):
-    recovery_reset_cases = RECOVERY_RESET_MILD_CASES
-
-
-@configclass
-class NarrowGaitRecoveryMediumNoMemoryEnvCfg(NarrowGaitRecoveryNoMemoryEnvCfg):
-    recovery_reset_cases = RECOVERY_RESET_MEDIUM_CASES
-
-
-@configclass
-class NarrowGaitRecoveryHardNoMemoryEnvCfg(NarrowGaitRecoveryNoMemoryEnvCfg):
-    recovery_reset_cases = RECOVERY_RESET_HARD_CASES
-
-
-@configclass
 class NarrowGaitRecoveryEnvCfg_PLAY(NarrowGaitRecoveryEnvCfg):
-    def __post_init__(self):
-        super().__post_init__()
-        self.scene.num_envs = 32
-        self.scene.env_spacing = 8.0
-        self.observations.policy.enable_corruption = False
-
-
-@configclass
-class NarrowGaitRecoveryNoMemoryEnvCfg_PLAY(NarrowGaitRecoveryNoMemoryEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32

@@ -14,29 +14,6 @@ def _local_root_pos(env, asset_name="robot"):
     return pos_w - env_origins
 
 
-def _failure_memory(env):
-    if not hasattr(env, "_narrow_memory"):
-        env._narrow_memory = {
-            "stuck_counter": torch.zeros(env.num_envs, device=env.device),
-            "wedge_counter": torch.zeros(env.num_envs, device=env.device),
-            "last_progress_vel": torch.zeros(env.num_envs, device=env.device),
-            "last_lateral_sign": torch.zeros(env.num_envs, device=env.device),
-            "oscillation_counter": torch.zeros(env.num_envs, device=env.device),
-            "last_realign_error": torch.zeros(env.num_envs, device=env.device),
-            "last_yaw_error": torch.zeros(env.num_envs, device=env.device),
-            "last_clearance": torch.zeros(env.num_envs, device=env.device),
-        }
-    return env._narrow_memory
-
-
-def reset_failure_memory(env):
-    memory = _failure_memory(env)
-    just_reset = env.episode_length_buf == 0
-    for value in memory.values():
-        value[just_reset] = 0.0
-    return memory
-
-
 def failure_termination_penalty(env, term_names=("stuck", "base_contact", "bad_orientation", "base_too_low")):
     """Penalize failure terminations without penalizing task success."""
     penalty = torch.zeros(env.num_envs, device=env.device)
@@ -367,78 +344,17 @@ def unsafe_clearance_penalty(
     return torch.clamp(safety_margin - clearance, min=0.0) / max(safety_margin, 1e-6)
 
 
-def recovery_memory_state(
-    env,
-    corridor_width: float,
-    estimated_d_min: float = DEFAULT_ESTIMATED_D_MIN,
-    asset_name: str = "robot",
-):
-    """Return compact failure-aware memory for a feed-forward policy.
-
-    Output:
-        [stuck_norm, wedge_norm, oscillation_norm, min_clearance_norm, delta_d_norm]
-    """
-    memory = reset_failure_memory(env)
-    robot = env.scene[asset_name]
-    pos = _local_root_pos(env, asset_name=asset_name)
-    y = pos[:, 1]
-    vx = robot.data.root_lin_vel_w[:, 0]
-    vy = robot.data.root_lin_vel_w[:, 1]
-    speed_xy = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=1)
-
-    half_w = corridor_width * 0.5
-    clearance = half_w - torch.abs(y)
-    unsafe = clearance < 0.08
-    stuck = speed_xy < 0.04
-
-    memory["stuck_counter"][stuck] += 1.0
-    memory["stuck_counter"][~stuck] = 0.0
-    memory["wedge_counter"][unsafe & stuck] += 1.0
-    memory["wedge_counter"][~(unsafe & stuck)] = 0.0
-
-    lateral_sign = torch.sign(vy)
-    changed_sign = (lateral_sign != 0.0) & (memory["last_lateral_sign"] != 0.0) & (lateral_sign != memory["last_lateral_sign"])
-    memory["oscillation_counter"][changed_sign] += 1.0
-    memory["last_lateral_sign"][lateral_sign != 0.0] = lateral_sign[lateral_sign != 0.0]
-    memory["last_progress_vel"][:] = vx
-
-    delta_d = corridor_width - estimated_d_min
-    delta_norm = torch.full_like(y, delta_d / max(estimated_d_min, 1e-6))
-
-    return torch.stack(
-        [
-            torch.clamp(memory["stuck_counter"] / 20.0, max=1.0),
-            torch.clamp(memory["wedge_counter"] / 20.0, max=1.0),
-            torch.clamp(memory["oscillation_counter"] / 20.0, max=1.0),
-            clearance / max(estimated_d_min, 1e-6),
-            delta_norm,
-        ],
-        dim=-1,
-    )
-
-
-def zero_recovery_memory_state(
-    env,
-    corridor_width: float,
-    estimated_d_min: float = DEFAULT_ESTIMATED_D_MIN,
-    asset_name: str = "robot",
-):
-    """Keep the recovery-memory observation shape but remove memory information."""
-    del corridor_width, estimated_d_min, asset_name
-    return torch.zeros(env.num_envs, 5, device=env.device)
-
-
 def recovery_progress_reward(
     env,
-    min_stuck_steps: float = 5.0,
+    min_forward_speed: float = 0.04,
     asset_name: str = "robot",
 ):
-    """Reward positive progress after the policy has recently been stuck."""
-    memory = reset_failure_memory(env)
+    """Current-state progress reward for slow or misaligned starts."""
     robot = env.scene[asset_name]
     vx = robot.data.root_lin_vel_w[:, 0]
-    was_stuck = memory["stuck_counter"] >= min_stuck_steps
-    return torch.where(was_stuck, torch.clamp(vx, min=0.0, max=0.5), torch.zeros_like(vx))
+    speed_xy = torch.linalg.norm(robot.data.root_lin_vel_w[:, :2], dim=1)
+    slow = speed_xy < min_forward_speed
+    return torch.where(slow, torch.clamp(vx, min=0.0, max=0.5), torch.zeros_like(vx))
 
 
 def heading_error_abs(env, asset_name: str = "robot"):
@@ -455,8 +371,7 @@ def recovery_realign_reward(
     yaw_weight: float = 0.65,
     asset_name: str = "robot",
 ):
-    """Reward reductions in lateral/yaw error inside the corridor."""
-    memory = reset_failure_memory(env)
+    """Reward small lateral and yaw error inside the corridor using current state."""
     robot = env.scene[asset_name]
     pos = _local_root_pos(env, asset_name=asset_name)
     x = pos[:, 0]
@@ -464,13 +379,10 @@ def recovery_realign_reward(
     yaw = _yaw_from_quat_wxyz(robot.data.root_quat_w)
     half_w = max(corridor_width * 0.5, 1.0e-6)
 
-    error = torch.abs(y) / half_w + yaw_weight * torch.abs(yaw) / torch.pi
     valid = (x > 0.0) & (x < goal_x)
-    improved = torch.clamp(memory["last_realign_error"] - error, min=0.0, max=0.25)
-    first_step = env.episode_length_buf <= 1
-    reward = torch.where(valid & (~first_step), improved, torch.zeros_like(error))
-    memory["last_realign_error"][:] = error
-    return reward
+    lateral_score = 1.0 - torch.clamp(torch.abs(y) / half_w, max=1.0)
+    yaw_score = 1.0 - torch.clamp(torch.abs(yaw) / 0.6, max=1.0)
+    return torch.where(valid, 0.5 * lateral_score + yaw_weight * yaw_score, torch.zeros_like(y))
 
 
 def wall_escape_reward(
@@ -479,19 +391,14 @@ def wall_escape_reward(
     near_wall_threshold: float = 0.22,
     asset_name: str = "robot",
 ):
-    """Reward increasing clearance when the robot is near a wall."""
-    memory = reset_failure_memory(env)
+    """Reward safe current clearance when the robot starts near a wall."""
     pos = _local_root_pos(env, asset_name=asset_name)
     y = pos[:, 1]
     half_w = corridor_width * 0.5
     clearance = half_w - torch.abs(y)
-    was_near = memory["last_clearance"] < near_wall_threshold
     is_near = clearance < near_wall_threshold
-    first_step = env.episode_length_buf <= 1
-    improvement = torch.clamp(clearance - memory["last_clearance"], min=0.0, max=0.05) / max(near_wall_threshold, 1.0e-6)
-    reward = torch.where((was_near | is_near) & (~first_step), improvement, torch.zeros_like(clearance))
-    memory["last_clearance"][:] = clearance
-    return reward
+    clearance_score = torch.clamp(clearance / max(near_wall_threshold, 1.0e-6), min=0.0, max=1.0)
+    return torch.where(is_near, clearance_score, torch.zeros_like(clearance))
 
 
 def centerline_velocity_reward(
@@ -522,23 +429,25 @@ def yaw_correction_reward(env, asset_name: str = "robot"):
 
 
 def yaw_realign_progress_reward(env, goal_x: float, asset_name: str = "robot"):
-    """Reward reductions in absolute yaw error before the goal."""
-    memory = reset_failure_memory(env)
+    """Reward small absolute yaw error before the goal using current state."""
     robot = env.scene[asset_name]
     pos = _local_root_pos(env, asset_name=asset_name)
     yaw_error = torch.abs(_yaw_from_quat_wxyz(robot.data.root_quat_w))
     valid = (pos[:, 0] > 0.0) & (pos[:, 0] < goal_x)
-    first_step = env.episode_length_buf <= 1
-    improved = torch.clamp(memory["last_yaw_error"] - yaw_error, min=0.0, max=0.20)
-    reward = torch.where(valid & (~first_step), improved, torch.zeros_like(yaw_error))
-    memory["last_yaw_error"][:] = yaw_error
-    return reward
+    score = 1.0 - torch.clamp(yaw_error / 0.6, max=1.0)
+    return torch.where(valid, score, torch.zeros_like(yaw_error))
 
 
-def oscillation_penalty(env):
-    """Small penalty for repeated lateral sign changes."""
-    memory = reset_failure_memory(env)
-    return torch.clamp(memory["oscillation_counter"] / 20.0, max=1.0)
+def lateral_velocity_penalty(env, asset_name: str = "robot"):
+    """Current-state penalty for lateral motion that causes visible weaving."""
+    robot = env.scene[asset_name]
+    return torch.abs(robot.data.root_lin_vel_w[:, 1])
+
+
+def base_height_error_l1(env, target_height: float = 0.50, asset_name: str = "robot"):
+    """Penalty for base height drift during narrow-passage traversal."""
+    robot = env.scene[asset_name]
+    return torch.abs(robot.data.root_pos_w[:, 2] - target_height)
 
 
 # =============================================================================

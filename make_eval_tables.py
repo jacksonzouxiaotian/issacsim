@@ -11,14 +11,17 @@ from pathlib import Path
 
 
 METRICS = (
-    "success",
+    "clean_success",
     "raw_success",
     "collision",
     "wedge",
-    "rejected",
-    "oscillation_count",
-    "completion_time",
+    "timeout",
+    "fall",
+    "time_to_goal",
     "min_clearance",
+    "yaw_error_mean",
+    "oscillation_count",
+    "action_smoothness",
 )
 
 
@@ -72,42 +75,44 @@ def markdown_table(headers: list[str], body: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
-def width_scan_table(rows: list[dict[str, str]]) -> str:
+def low_level_table(rows: list[dict[str, str]]) -> str:
     body = []
-    groups = group_rows(rows, ("controller", "scenario", "zero_recovery_memory", "width"))
-    for key in sorted(groups, key=lambda item: (item[0], item[1], item[2], float(item[3] or 0.0))):
-        controller, scenario, zero_memory, width = key
+    groups = group_rows(rows, ("scenario", "width"))
+    for key in sorted(groups, key=lambda item: (item[0], float(item[1] or 0.0))):
+        scenario, width = key
         summary = summarize_group(groups[key])
         body.append(
             [
-                controller,
                 scenario or "nominal",
-                zero_memory or "0",
                 width,
-                _fmt(summary["success"]),
+                _fmt(summary["clean_success"]),
                 _fmt(summary["raw_success"]),
                 _fmt(summary["collision"]),
                 _fmt(summary["wedge"]),
-                _fmt(summary["rejected"]),
-                _fmt(summary["completion_time"]),
+                _fmt(summary["timeout"]),
+                _fmt(summary["fall"]),
+                _fmt(summary["time_to_goal"]),
                 _fmt(summary["min_clearance"]),
+                _fmt(summary["yaw_error_mean"]),
                 _fmt(summary["oscillation_count"], 2),
+                _fmt(summary["action_smoothness"]),
             ]
         )
     return markdown_table(
         [
-            "controller",
             "scenario",
-            "zero_memory",
             "width",
             "clean_SR",
             "raw_SR",
             "collision",
             "wedge",
-            "reject",
+            "timeout",
+            "fall",
             "time",
             "min_clearance",
+            "yaw",
             "osc",
+            "smooth",
         ],
         body,
     )
@@ -115,23 +120,22 @@ def width_scan_table(rows: list[dict[str, str]]) -> str:
 
 def delta_d_table(rows: list[dict[str, str]]) -> str:
     body = []
-    groups = group_rows(rows, ("controller", "scenario", "delta_d"))
-    for key in sorted(groups, key=lambda item: (item[0], item[1], float(item[2] or 0.0))):
-        controller, scenario, delta_d = key
+    groups = group_rows(rows, ("scenario", "delta_d"))
+    for key in sorted(groups, key=lambda item: (item[0], float(item[1] or 0.0))):
+        scenario, delta_d = key
         summary = summarize_group(groups[key])
         body.append(
             [
-                controller,
                 scenario or "nominal",
                 delta_d,
-                _fmt(summary["success"]),
+                _fmt(summary["clean_success"]),
                 _fmt(summary["wedge"]),
-                _fmt(summary["rejected"]),
-                _fmt(1.0 - summary["success"]),
+                _fmt(summary["collision"]),
+                _fmt(1.0 - summary["clean_success"]),
             ]
         )
     return markdown_table(
-        ["controller", "scenario", "delta_D", "success_prob", "wedge_prob", "reject_prob", "calibration_error"],
+        ["scenario", "delta_D", "clean_success_prob", "wedge_prob", "collision_prob", "failure_prob"],
         body,
     )
 
@@ -152,8 +156,8 @@ def main() -> None:
     text = "\n\n".join(
         [
             "# Narrow-Passage Evaluation Tables",
-            "## Width, Recovery, and Generalization Summary",
-            width_scan_table(rows),
+            "## Low-Level Locomotion Summary",
+            low_level_table(rows),
             "## Delta-D Calibration Inputs",
             delta_d_table(rows),
         ]
