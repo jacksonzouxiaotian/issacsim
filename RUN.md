@@ -68,6 +68,18 @@ Stage 4: recovery-start training without memory.
 - Train: 400-800 additional iterations.
 - Checkpoint name: `low_level_stage4_recovery_starts_current_state`.
 
+Stage 4b: focused right-wall and small-yaw recovery.
+
+- Task: `Isaac-Narrow-Gait-Recovery-RightWall-SmallYaw-Anymal-C-v0`.
+- Reset: mostly right-wall starts with small yaw, plus a small amount of
+  entrance, left-wall, and center-yaw starts to reduce forgetting.
+- Motivation: use this stage when fixed evaluation shows high
+  `right_wall_start` collision rate while nominal traversal remains strong.
+- Reward: stronger clean-success, contact-failure, and unsafe-clearance
+  pressure, with local realignment rewards kept small.
+- Train: 400-800 additional iterations from the best mild recovery checkpoint.
+- Checkpoint name: `low_level_stage2d_right_wall_small_yaw`.
+
 Stage 5: generalization testing.
 
 - Scenes: doorway, asymmetric obstacle, L-corridor.
@@ -102,6 +114,21 @@ conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py 
   --device cuda:0
 ```
 
+Focused right-wall/small-yaw recovery:
+
+```bash
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Narrow-Gait-Recovery-RightWall-SmallYaw-Anymal-C-v0 \
+  --headless \
+  --num_envs 2048 \
+  --max_iterations 500 \
+  --resume \
+  --load_run <previous_run> \
+  --checkpoint <previous_checkpoint.pt> \
+  --run_name low_level_stage2d_right_wall_small_yaw \
+  --device cuda:0
+```
+
 ## Evaluate
 
 Width scan:
@@ -123,13 +150,13 @@ Recovery-start scenarios:
 
 ```bash
 conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py \
-  --task Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0 \
+  --task Isaac-Narrow-Gait-Recovery-RightWall-SmallYaw-Anymal-C-v0 \
   --checkpoint logs/rsl_rl/anymal_c_narrow_gait/<run>/model_<iter>.pt \
-  --scenarios left_wall_start right_wall_start yaw_left_start yaw_right_start \
+  --scenarios nominal left_wall_start right_wall_start yaw_left_start yaw_right_start \
   --widths 0.85 \
   --num_envs 64 \
-  --max_steps 600 \
-  --output logs/narrow_passage_eval/recovery_starts.csv \
+  --max_steps 800 \
+  --output logs/narrow_passage_eval/right_wall_small_yaw_eval.csv \
   --headless \
   --device cuda:0
 ```
@@ -154,6 +181,11 @@ The evaluator writes:
 - per-trial CSV;
 - summary JSON;
 - markdown table.
+
+For multi-width or multi-scenario runs, the evaluator launches each combination
+in an isolated subprocess. This avoids Isaac Sim world-recreation hangs between
+scenarios. `timeout_rate` is computed from the environment's `time_out`
+termination term as well as unfinished episodes.
 
 ## Convenience Validation
 

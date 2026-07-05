@@ -35,7 +35,7 @@ GOAL_TOL = 0.20
 
 RECOVERY_RESET_MILD_CASES = (
     {
-        "weight": 0.55,
+        "weight": 0.70,
         "pose_range": {"x": (-0.9, -0.5), "y": (-0.05, 0.05), "yaw": (-0.10, 0.10)},
         "velocity_range": {
             "x": (0.0, 0.05),
@@ -47,40 +47,82 @@ RECOVERY_RESET_MILD_CASES = (
         },
     },
     {
-        "weight": 0.15,
-        "pose_range": {"x": (0.4, 2.2), "y": (0.10, 0.18), "yaw": (-0.16, -0.04)},
+        "weight": 0.10,
+        "pose_range": {"x": (0.3, 1.6), "y": (0.07, 0.13), "yaw": (-0.12, -0.03)},
         "velocity_range": {
-            "x": (-0.02, 0.06),
-            "y": (-0.02, 0.02),
+            "x": (0.00, 0.08),
+            "y": (-0.01, 0.01),
             "z": (0.0, 0.0),
             "roll": (0.0, 0.0),
             "pitch": (0.0, 0.0),
-            "yaw": (-0.05, 0.05),
+            "yaw": (-0.03, 0.03),
+        },
+    },
+    {
+        "weight": 0.10,
+        "pose_range": {"x": (0.3, 1.6), "y": (-0.13, -0.07), "yaw": (0.03, 0.12)},
+        "velocity_range": {
+            "x": (0.00, 0.08),
+            "y": (-0.01, 0.01),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.03, 0.03),
+        },
+    },
+    {
+        "weight": 0.10,
+        "pose_range": {"x": (0.3, 1.5), "y": (-0.04, 0.04), "yaw": (-0.16, 0.16)},
+        "velocity_range": {
+            "x": (0.00, 0.08),
+            "y": (-0.01, 0.01),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.03, 0.03),
+        },
+    },
+)
+
+RECOVERY_RESET_RIGHT_WALL_SMALL_YAW_CASES = (
+    {
+        "weight": 0.15,
+        "pose_range": {"x": (-0.9, -0.5), "y": (-0.04, 0.04), "yaw": (-0.08, 0.08)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[0]["velocity_range"],
+    },
+    {
+        "weight": 0.50,
+        "pose_range": {"x": (0.35, 2.0), "y": (-0.24, -0.16), "yaw": (0.05, 0.18)},
+        "velocity_range": {
+            "x": (0.00, 0.06),
+            "y": (-0.01, 0.01),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (-0.025, 0.025),
         },
     },
     {
         "weight": 0.15,
-        "pose_range": {"x": (0.4, 2.2), "y": (-0.18, -0.10), "yaw": (0.04, 0.16)},
+        "pose_range": {"x": (0.35, 1.8), "y": (-0.04, 0.04), "yaw": (-0.20, 0.20)},
         "velocity_range": {
-            "x": (-0.02, 0.06),
-            "y": (-0.02, 0.02),
+            "x": (0.00, 0.07),
+            "y": (-0.01, 0.01),
             "z": (0.0, 0.0),
             "roll": (0.0, 0.0),
             "pitch": (0.0, 0.0),
-            "yaw": (-0.05, 0.05),
+            "yaw": (-0.03, 0.03),
         },
     },
     {
-        "weight": 0.15,
-        "pose_range": {"x": (0.4, 2.0), "y": (-0.04, 0.04), "yaw": (-0.22, 0.22)},
-        "velocity_range": {
-            "x": (-0.02, 0.05),
-            "y": (-0.02, 0.02),
-            "z": (0.0, 0.0),
-            "roll": (0.0, 0.0),
-            "pitch": (0.0, 0.0),
-            "yaw": (-0.06, 0.06),
-        },
+        "weight": 0.10,
+        "pose_range": {"x": (0.35, 1.8), "y": (0.10, 0.18), "yaw": (-0.14, -0.04)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[1]["velocity_range"],
+    },
+    {
+        "weight": 0.10,
+        "pose_range": {"x": (0.35, 1.8), "y": (-0.18, -0.10), "yaw": (0.04, 0.14)},
+        "velocity_range": RECOVERY_RESET_MILD_CASES[2]["velocity_range"],
     },
 )
 
@@ -513,39 +555,70 @@ class NarrowGaitRecoveryEnvCfg(NarrowGaitEnvCfg):
         self.commands.base_velocity.ranges.ang_vel_z = (-0.03, 0.03)
         self.commands.base_velocity.ranges.heading = (-0.05, 0.05)
 
-        self.rewards.track_lin_vel_xy_exp.weight = 0.9
-        self.rewards.forward_progress.weight = 2.0
-        self.rewards.centerline_penalty.weight = -5.0
-        self.rewards.unsafe_clearance.weight = -10.0
+        self.rewards.track_lin_vel_xy_exp.weight = 0.95
+        self.rewards.forward_progress.weight = 3.2
+        self.rewards.centerline_penalty.weight = -2.8
+        self.rewards.unsafe_clearance.weight = -14.0
         self.rewards.unsafe_clearance.params["safety_margin"] = 0.22
-        self.rewards.success_bonus.weight = 180.0
-        self.rewards.failure_termination.weight = -320.0
-        self.rewards.heading_alignment = RewTerm(func=narrow_mdp.heading_error_abs, weight=-4.0)
+        self.rewards.success_bonus.weight = 260.0
+        self.rewards.time_penalty.weight = -0.08
+        self.rewards.failure_termination.weight = -420.0
+        self.rewards.heading_alignment = RewTerm(func=narrow_mdp.heading_error_abs, weight=-5.0)
         self.rewards.current_realign = RewTerm(
             func=narrow_mdp.recovery_realign_reward,
-            weight=6.0,
+            weight=1.8,
             params={"corridor_width": CORRIDOR_WIDTH, "goal_x": GOAL_X},
         )
         self.rewards.clearance_recovery = RewTerm(
             func=narrow_mdp.wall_escape_reward,
-            weight=5.0,
+            weight=2.0,
             params={"corridor_width": CORRIDOR_WIDTH, "near_wall_threshold": 0.24},
         )
         self.rewards.centerline_velocity = RewTerm(
             func=narrow_mdp.centerline_velocity_reward,
-            weight=7.0,
+            weight=2.5,
             params={"corridor_width": CORRIDOR_WIDTH, "near_wall_threshold": 0.24},
         )
-        self.rewards.yaw_correction = RewTerm(func=narrow_mdp.yaw_correction_reward, weight=3.0)
-        self.rewards.lateral_velocity.weight = -1.2
+        self.rewards.yaw_correction = RewTerm(func=narrow_mdp.yaw_correction_reward, weight=1.2)
+        self.rewards.lateral_velocity.weight = -1.0
 
-        self.terminations.stuck.params["window_s"] = 1.4
-        self.terminations.stuck.params["min_forward_speed"] = 0.025
+        self.terminations.stuck.params["window_s"] = 1.2
+        self.terminations.stuck.params["min_forward_speed"] = 0.035
 
 
 @configclass
 class NarrowGaitRecoveryMildEnvCfg(NarrowGaitRecoveryEnvCfg):
     recovery_reset_cases = RECOVERY_RESET_MILD_CASES
+
+
+@configclass
+class NarrowGaitRecoveryRightWallSmallYawEnvCfg(NarrowGaitRecoveryEnvCfg):
+    """Right-wall and small-yaw recovery phase with contact-safe passage pressure."""
+
+    recovery_reset_cases = RECOVERY_RESET_RIGHT_WALL_SMALL_YAW_CASES
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.18, 0.42)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.01, 0.01)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.015, 0.015)
+        self.commands.base_velocity.ranges.heading = (-0.04, 0.04)
+
+        self.rewards.track_lin_vel_xy_exp.weight = 0.85
+        self.rewards.forward_progress.weight = 2.8
+        self.rewards.centerline_penalty.weight = -2.4
+        self.rewards.unsafe_clearance.weight = -24.0
+        self.rewards.unsafe_clearance.params["safety_margin"] = 0.24
+        self.rewards.success_bonus.weight = 300.0
+        self.rewards.failure_termination.weight = -760.0
+        self.rewards.heading_alignment.weight = -5.5
+        self.rewards.current_realign.weight = 1.2
+        self.rewards.clearance_recovery.weight = 4.0
+        self.rewards.centerline_velocity.weight = 3.5
+        self.rewards.yaw_correction.weight = 1.4
+        self.rewards.lateral_velocity.weight = -1.4
+        self.terminations.stuck.params["window_s"] = 1.0
+        self.terminations.stuck.params["min_forward_speed"] = 0.04
 
 
 @configclass
@@ -564,16 +637,17 @@ class NarrowGaitRecoveryHardCleanRewardEnvCfg(NarrowGaitRecoveryHardEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.rewards.track_lin_vel_xy_exp.weight = 0.9
-        self.rewards.forward_progress.weight = 0.8
-        self.rewards.undesired_contacts.weight = -4.0
+        self.rewards.track_lin_vel_xy_exp.weight = 0.85
+        self.rewards.forward_progress.weight = 2.4
+        self.rewards.undesired_contacts.weight = -6.0
         self.rewards.unsafe_clearance.weight = -16.0
-        self.rewards.success_bonus.weight = 170.0
-        self.rewards.failure_termination.weight = -650.0
-        self.rewards.clearance_recovery.weight = 12.0
-        self.rewards.centerline_velocity.weight = 8.0
-        self.rewards.yaw_correction.weight = 2.0
-        self.rewards.lateral_velocity.weight = -1.5
+        self.rewards.success_bonus.weight = 300.0
+        self.rewards.failure_termination.weight = -700.0
+        self.rewards.current_realign.weight = 1.2
+        self.rewards.clearance_recovery.weight = 2.4
+        self.rewards.centerline_velocity.weight = 2.2
+        self.rewards.yaw_correction.weight = 1.0
+        self.rewards.lateral_velocity.weight = -1.3
 
 
 @configclass
@@ -591,12 +665,12 @@ class NarrowGaitRecoveryBalancedCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnv
             weight=1.0,
             params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.16, "max_abs_yaw": 0.35},
         )
-        self.rewards.heading_alignment.weight = -7.0
-        self.rewards.current_realign.weight = 10.0
-        self.rewards.clearance_recovery.weight = 14.0
-        self.rewards.centerline_velocity.weight = 10.0
-        self.rewards.yaw_correction.weight = 4.0
-        self.rewards.lateral_velocity.weight = -1.8
+        self.rewards.heading_alignment.weight = -6.0
+        self.rewards.current_realign.weight = 1.4
+        self.rewards.clearance_recovery.weight = 3.0
+        self.rewards.centerline_velocity.weight = 3.0
+        self.rewards.yaw_correction.weight = 1.4
+        self.rewards.lateral_velocity.weight = -1.5
 
 
 @configclass
@@ -610,24 +684,24 @@ class NarrowGaitRecoveryYawCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnvCfg):
         self.commands.base_velocity.ranges.lin_vel_x = (0.05, 0.30)
         self.commands.base_velocity.ranges.lin_vel_y = (-0.01, 0.01)
         self.commands.base_velocity.ranges.ang_vel_z = (-0.01, 0.01)
-        self.rewards.track_lin_vel_xy_exp.weight = 0.55
+        self.rewards.track_lin_vel_xy_exp.weight = 0.75
         self.rewards.forward_progress = RewTerm(
             func=narrow_mdp.contact_free_forward_progress_reward,
-            weight=0.7,
-            params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.14, "max_abs_yaw": 0.30},
+            weight=1.8,
+            params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.13, "max_abs_yaw": 0.45},
         )
-        self.rewards.centerline_penalty.weight = -3.5
-        self.rewards.heading_alignment.weight = -10.0
-        self.rewards.current_realign.weight = 10.0
+        self.rewards.centerline_penalty.weight = -2.4
+        self.rewards.heading_alignment.weight = -7.0
+        self.rewards.current_realign.weight = 1.2
         self.rewards.yaw_realign = RewTerm(
             func=narrow_mdp.yaw_realign_progress_reward,
-            weight=8.0,
+            weight=2.5,
             params={"goal_x": GOAL_X},
         )
-        self.rewards.yaw_correction.weight = 7.0
-        self.rewards.centerline_velocity.weight = 6.0
-        self.rewards.clearance_recovery.weight = 8.0
-        self.rewards.lateral_velocity.weight = -2.0
+        self.rewards.yaw_correction.weight = 2.0
+        self.rewards.centerline_velocity.weight = 2.0
+        self.rewards.clearance_recovery.weight = 2.5
+        self.rewards.lateral_velocity.weight = -1.4
 
 
 @configclass
@@ -642,17 +716,17 @@ class NarrowGaitRecoveryNearWallCleanEnvCfg(NarrowGaitRecoveryHardCleanRewardEnv
         self.commands.base_velocity.ranges.lin_vel_y = (-0.01, 0.01)
         self.rewards.forward_progress = RewTerm(
             func=narrow_mdp.contact_free_forward_progress_reward,
-            weight=0.9,
-            params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.15, "max_abs_yaw": 0.36},
+            weight=1.6,
+            params={"corridor_width": CORRIDOR_WIDTH, "min_clearance": 0.13, "max_abs_yaw": 0.42},
         )
-        self.rewards.centerline_penalty.weight = -4.0
-        self.rewards.unsafe_clearance.weight = -20.0
-        self.rewards.current_realign.weight = 12.0
-        self.rewards.clearance_recovery.weight = 20.0
-        self.rewards.centerline_velocity.weight = 14.0
+        self.rewards.centerline_penalty.weight = -2.6
+        self.rewards.unsafe_clearance.weight = -22.0
+        self.rewards.current_realign.weight = 1.2
+        self.rewards.clearance_recovery.weight = 3.5
+        self.rewards.centerline_velocity.weight = 3.0
         self.rewards.heading_alignment.weight = -5.0
-        self.rewards.yaw_correction.weight = 3.0
-        self.rewards.lateral_velocity.weight = -1.6
+        self.rewards.yaw_correction.weight = 1.3
+        self.rewards.lateral_velocity.weight = -1.5
 
 
 @configclass

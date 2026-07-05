@@ -38,6 +38,7 @@ only. The policy remains memory-free:
 
 ```bash
 Isaac-Narrow-Gait-Recovery-Mild-Anymal-C-v0
+Isaac-Narrow-Gait-Recovery-RightWall-SmallYaw-Anymal-C-v0
 Isaac-Narrow-Gait-Recovery-Medium-Anymal-C-v0
 Isaac-Narrow-Gait-Recovery-Hard-Anymal-C-v0
 Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0
@@ -114,7 +115,9 @@ Evaluation metrics:
   - Gym task registration for low-level gait tasks.
 - `scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py`
   - low-level checkpoint evaluator that writes CSV, summary JSON, and markdown
-    tables.
+    tables. Multi-scenario or multi-width evaluations are launched as isolated
+    subprocesses so Isaac Sim does not need to recreate multiple worlds inside
+    one process. Timeout terminations are counted in `timeout_rate`.
 - `scripts/narrow_passage/validate_narrow_pipeline.sh`
   - convenience validation entry point for width scans, recovery-start tests,
     and generalization tests.
@@ -160,3 +163,22 @@ LOW_LEVEL_CHECKPOINT=logs/rsl_rl/anymal_c_narrow_gait/<memory_free_run>/model_<i
   NUM_ENVS=4 MAX_STEPS=80 WIDTHS="0.85" RUN_RECOVERY=0 RUN_GENERALIZATION=0 \
   bash scripts/narrow_passage/validate_narrow_pipeline.sh
 ```
+
+## Current Recovery Curriculum Notes
+
+The recommended recovery sequence after a clean Stage 1 gait checkpoint is:
+
+1. `Isaac-Narrow-Gait-Recovery-Mild-Anymal-C-v0`
+   - mild entrance, small yaw, and light near-wall resets;
+   - used to preserve nominal traversal while introducing recovery starts.
+2. `Isaac-Narrow-Gait-Recovery-RightWall-SmallYaw-Anymal-C-v0`
+   - focused right-wall and small-yaw resets;
+   - intended for the common failure mode where `right_wall_start` has high
+     collision rate.
+3. `Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0` or
+   `Isaac-Narrow-Gait-Recovery-Yaw-Clean-Anymal-C-v0`
+   - use only after the focused stage no longer degrades nominal traversal.
+
+Do not report a recovery policy as a main contribution unless fixed-start
+evaluation reaches acceptable clean success and collision rates. The current
+repository is designed to make this failure mode visible rather than hide it.

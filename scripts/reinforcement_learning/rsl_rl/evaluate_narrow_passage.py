@@ -9,7 +9,9 @@ import argparse
 import csv
 import json
 import os
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 
 import torch
@@ -44,6 +46,153 @@ parser.add_argument("--output", type=str, default="logs/narrow_passage_eval/metr
 parser.add_argument("--seed", type=int, default=42)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+
+
+def _strip_arg_values(argv, names):
+    cleaned = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in names:
+            index += 1
+            while index < len(argv) and not argv[index].startswith("--"):
+                index += 1
+            continue
+        cleaned.append(argv[index])
+        index += 1
+    return cleaned
+
+
+def _summarize_rows(rows):
+    groups = {}
+    for row in rows:
+        key = (row["scenario"], float(row["width"]))
+        groups.setdefault(key, []).append(row)
+
+    summary_rows = []
+    for (scenario, width), items in sorted(groups.items()):
+        n = max(len(items), 1)
+        complete_times = [float(item["time_to_goal"]) for item in items if int(item["raw_success"])]
+        summary_rows.append(
+            {
+                "scenario": scenario,
+                "width": width,
+                "num_trials": n,
+                "clean_success_rate": sum(int(item["clean_success"]) for item in items) / n,
+                "raw_success_rate": sum(int(item["raw_success"]) for item in items) / n,
+                "collision_rate": sum(int(item["collision"]) for item in items) / n,
+                "wedge_rate": sum(int(item["wedge"]) for item in items) / n,
+                "timeout_rate": sum(int(item["timeout"]) for item in items) / n,
+                "mean_time_to_goal": sum(complete_times) / max(len(complete_times), 1),
+                "min_clearance_mean": sum(float(item["min_clearance"]) for item in items) / n,
+                "min_clearance_min": min(float(item["min_clearance"]) for item in items),
+                "yaw_error_mean": sum(float(item["yaw_error_mean"]) for item in items) / n,
+                "oscillation_count": sum(float(item["oscillation_count"]) for item in items) / n,
+                "action_smoothness": sum(float(item["action_smoothness"]) for item in items) / n,
+                "fall_rate": sum(int(item["fall"]) for item in items) / n,
+            }
+        )
+    return summary_rows
+
+
+def _write_markdown_summary(summary_rows, path):
+    headers = [
+        "scenario",
+        "width",
+        "clean_SR",
+        "raw_SR",
+        "collision",
+        "wedge",
+        "timeout",
+        "time",
+        "clear_mean",
+        "clear_min",
+        "yaw",
+        "osc",
+        "smooth",
+        "fall",
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("| " + " | ".join(headers) + " |\n")
+        f.write("|" + "|".join([" --- " for _ in headers]) + "|\n")
+        for row in summary_rows:
+            f.write(
+                "| "
+                + " | ".join(
+                    [
+                        str(row["scenario"]),
+                        f"{row['width']:.2f}",
+                        f"{row['clean_success_rate']:.4f}",
+                        f"{row['raw_success_rate']:.4f}",
+                        f"{row['collision_rate']:.4f}",
+                        f"{row['wedge_rate']:.4f}",
+                        f"{row['timeout_rate']:.4f}",
+                        f"{row['mean_time_to_goal']:.3f}",
+                        f"{row['min_clearance_mean']:.3f}",
+                        f"{row['min_clearance_min']:.3f}",
+                        f"{row['yaw_error_mean']:.3f}",
+                        f"{row['oscillation_count']:.2f}",
+                        f"{row['action_smoothness']:.3f}",
+                        f"{row['fall_rate']:.4f}",
+                    ]
+                )
+                + " |\n"
+            )
+
+
+def _run_multi_eval_in_subprocesses():
+    combos = [(scenario, width) for scenario in args_cli.scenarios for width in args_cli.widths]
+    if len(combos) <= 1 or os.environ.get("NARROW_EVAL_SINGLE_PROCESS") == "1":
+        return False
+
+    os.makedirs(os.path.dirname(args_cli.output), exist_ok=True)
+    base_argv = _strip_arg_values(
+        sys.argv[1:],
+        {"--widths", "--scenarios", "--output"},
+    )
+    all_rows = []
+    with tempfile.TemporaryDirectory(prefix="narrow_eval_") as tmpdir:
+        for scenario, width in combos:
+            part_path = os.path.join(tmpdir, f"{scenario}_{width:.3f}.csv")
+            cmd = [
+                sys.executable,
+                sys.argv[0],
+                *base_argv,
+                "--scenarios",
+                scenario,
+                "--widths",
+                f"{width:.6f}",
+                "--output",
+                part_path,
+            ]
+            env = os.environ.copy()
+            env["NARROW_EVAL_SINGLE_PROCESS"] = "1"
+            print(f"[INFO] Launching isolated eval process: scenario={scenario} width={width:.3f}", flush=True)
+            subprocess.run(cmd, check=True, env=env)
+            with open(part_path, newline="", encoding="utf-8") as f:
+                all_rows.extend(csv.DictReader(f))
+
+    with open(args_cli.output, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(all_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(all_rows)
+
+    summary_rows = _summarize_rows(all_rows)
+    summary_path = os.path.splitext(args_cli.output)[0] + "_summary.json"
+    table_path = os.path.splitext(args_cli.output)[0] + "_table.md"
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary_rows, f, indent=2)
+    _write_markdown_summary(summary_rows, table_path)
+
+    print(f"[INFO] Wrote per-trial metrics to {args_cli.output}", flush=True)
+    print(f"[INFO] Wrote summary JSON to {summary_path}", flush=True)
+    print(f"[INFO] Wrote markdown table to {table_path}", flush=True)
+    return True
+
+
+if _run_multi_eval_in_subprocesses():
+    sys.exit(0)
+
+
 sys.argv = [sys.argv[0]] + hydra_args
 
 app_launcher = AppLauncher(args_cli)
@@ -78,6 +227,7 @@ class EvalStats:
     raw_success: torch.Tensor
     collision: torch.Tensor
     wedge: torch.Tensor
+    timeout: torch.Tensor
     fall: torch.Tensor
 
 
@@ -159,6 +309,7 @@ def make_stats(num_envs, num_actions, device):
         raw_success=torch.zeros(num_envs, dtype=torch.bool, device=device),
         collision=torch.zeros(num_envs, dtype=torch.bool, device=device),
         wedge=torch.zeros(num_envs, dtype=torch.bool, device=device),
+        timeout=torch.zeros(num_envs, dtype=torch.bool, device=device),
         fall=torch.zeros(num_envs, dtype=torch.bool, device=device),
     )
 
@@ -205,6 +356,8 @@ def update_stats(stats, env, width, actions, step_idx):
         stats.collision |= active_mask & base_low
     if "stuck" in active_terms:
         stats.wedge |= active_mask & env.termination_manager.get_term("stuck")
+    if "time_out" in active_terms:
+        stats.timeout |= active_mask & env.termination_manager.get_term("time_out")
 
     just_done = env.reset_buf & active_mask
     stats.done |= env.reset_buf
@@ -246,6 +399,8 @@ def run_eval(task, scenario, width):
         timeout = step_count < 0
         if timeout:
             step_count = args_cli.max_steps
+        else:
+            timeout = bool(stats.timeout[env_id].item())
         raw_success = bool(stats.raw_success[env_id].item())
         collision = bool(stats.collision[env_id].item())
         wedge = bool(stats.wedge[env_id].item())
@@ -358,7 +513,7 @@ def main():
     all_rows = []
     for scenario in args_cli.scenarios:
         for width in args_cli.widths:
-            print(f"[INFO] Evaluating scenario={scenario} width={width:.3f}")
+            print(f"[INFO] Evaluating scenario={scenario} width={width:.3f}", flush=True)
             all_rows.extend(run_eval(args_cli.task, scenario, width))
 
     with open(args_cli.output, "w", newline="", encoding="utf-8") as f:
