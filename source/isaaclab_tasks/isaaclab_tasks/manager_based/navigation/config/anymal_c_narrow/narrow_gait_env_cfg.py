@@ -622,6 +622,34 @@ class NarrowGaitRecoveryRightWallSmallYawEnvCfg(NarrowGaitRecoveryEnvCfg):
 
 
 @configclass
+class NarrowGaitAblationFullRewardEnvCfg(NarrowGaitRecoveryRightWallSmallYawEnvCfg):
+    """Ablation reference: full reward with recovery-start curriculum."""
+
+
+@configclass
+class NarrowGaitAblationNoClearanceRewardEnvCfg(NarrowGaitRecoveryRightWallSmallYawEnvCfg):
+    """Ablation: remove the unsafe-clearance reward term only."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.rewards.unsafe_clearance.weight = 0.0
+
+
+@configclass
+class NarrowGaitAblationNoCenterlineRewardEnvCfg(NarrowGaitRecoveryRightWallSmallYawEnvCfg):
+    """Ablation: remove the centerline-tracking reward term only."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.rewards.centerline_penalty.weight = 0.0
+
+
+@configclass
+class NarrowGaitAblationNoRecoveryCurriculumEnvCfg(NarrowGaitEnvCfg):
+    """Ablation: full low-level reward with entrance-only resets."""
+
+
+@configclass
 class NarrowGaitRecoveryMediumEnvCfg(NarrowGaitRecoveryEnvCfg):
     recovery_reset_cases = RECOVERY_RESET_MEDIUM_CASES
 

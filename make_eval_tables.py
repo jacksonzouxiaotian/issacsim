@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Build compact markdown tables from narrow-passage evaluation CSV files."""
+"""Build compact markdown tables from narrow-passage evaluation CSV files.
+
+The evaluation logs currently contain two CSV schemas. Older files use names
+such as ``success``, ``completion_time`` and ``rejected``; newer files use
+``clean_success``, ``time_to_goal`` and ``reject``-style metrics. This script
+normalizes those field names, keeps a method dimension when present, and never
+modifies the original CSV files.
+"""
 
 from __future__ import annotations
 
-import argparse
 import csv
 import math
 from collections import defaultdict
@@ -15,21 +21,39 @@ METRICS = (
     "raw_success",
     "collision",
     "wedge",
-    "timeout",
-    "fall",
+    "reject",
     "time_to_goal",
     "min_clearance",
-    "yaw_error_mean",
     "oscillation_count",
-    "action_smoothness",
 )
 
 
-def _float(row: dict[str, str], key: str, default: float = 0.0) -> float:
+ALIASES = {
+    "method": ("method", "controller", "policy", "task"),
+    "clean_success": ("clean_success", "success"),
+    "raw_success": ("raw_success", "success"),
+    "collision": ("collision",),
+    "wedge": ("wedge",),
+    "reject": ("reject", "rejected"),
+    "time_to_goal": ("time_to_goal", "completion_time"),
+    "min_clearance": ("min_clearance",),
+    "oscillation_count": ("oscillation_count",),
+}
+
+
+def _float(row: dict[str, str], key: str, default: float = math.nan) -> float:
     try:
         return float(row.get(key, default))
     except (TypeError, ValueError):
         return default
+
+
+def _first(row: dict[str, str], names: tuple[str, ...], default: str = "") -> str:
+    for name in names:
+        value = row.get(name, "")
+        if value != "":
+            return value
+    return default
 
 
 def _mean(values: list[float]) -> float:
@@ -42,20 +66,35 @@ def _fmt(value: float, digits: int = 3) -> str:
     return f"{value:.{digits}f}"
 
 
+def normalize_row(row: dict[str, str], path: Path) -> dict[str, str]:
+    method = _first(row, ALIASES["method"], default="")
+    normalized = {
+        "_file": path.name,
+        "method": method or path.stem,
+        "scenario": row.get("scenario") or "nominal",
+        "width": row.get("width", ""),
+        "delta_d": row.get("delta_d", ""),
+    }
+    for canonical, aliases in ALIASES.items():
+        if canonical == "method":
+            continue
+        normalized[canonical] = _first(row, aliases, default="0" if canonical == "reject" else "")
+    return normalized
+
+
 def read_rows(paths: list[Path]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for path in paths:
         with path.open(newline="", encoding="utf-8") as stream:
             for row in csv.DictReader(stream):
-                row["_file"] = path.name
-                rows.append(row)
+                rows.append(normalize_row(row, path))
     return rows
 
 
 def summarize_group(rows: list[dict[str, str]]) -> dict[str, float]:
     summary = {}
     for metric in METRICS:
-        values = [_float(row, metric, math.nan) for row in rows if row.get(metric, "") != ""]
+        values = [_float(row, metric) for row in rows if row.get(metric, "") != ""]
         summary[metric] = _mean(values) if values else math.nan
     return summary
 
@@ -77,42 +116,38 @@ def markdown_table(headers: list[str], body: list[list[str]]) -> str:
 
 def low_level_table(rows: list[dict[str, str]]) -> str:
     body = []
-    groups = group_rows(rows, ("scenario", "width"))
-    for key in sorted(groups, key=lambda item: (item[0], float(item[1] or 0.0))):
-        scenario, width = key
+    groups = group_rows(rows, ("method", "scenario", "width"))
+    for key in sorted(groups, key=lambda item: (item[0], item[1], float(item[2] or 0.0))):
+        method, scenario, width = key
         summary = summarize_group(groups[key])
         body.append(
             [
+                method,
                 scenario or "nominal",
                 width,
                 _fmt(summary["clean_success"]),
                 _fmt(summary["raw_success"]),
                 _fmt(summary["collision"]),
                 _fmt(summary["wedge"]),
-                _fmt(summary["timeout"]),
-                _fmt(summary["fall"]),
+                _fmt(summary["reject"]),
                 _fmt(summary["time_to_goal"]),
                 _fmt(summary["min_clearance"]),
-                _fmt(summary["yaw_error_mean"]),
                 _fmt(summary["oscillation_count"], 2),
-                _fmt(summary["action_smoothness"]),
             ]
         )
     return markdown_table(
         [
+            "method",
             "scenario",
             "width",
             "clean_SR",
             "raw_SR",
             "collision",
             "wedge",
-            "timeout",
-            "fall",
-            "time",
-            "min_clearance",
-            "yaw",
-            "osc",
-            "smooth",
+            "reject",
+            "mean_time",
+            "mean_min_clearance",
+            "mean_oscillation",
         ],
         body,
     )
@@ -120,27 +155,30 @@ def low_level_table(rows: list[dict[str, str]]) -> str:
 
 def delta_d_table(rows: list[dict[str, str]]) -> str:
     body = []
-    groups = group_rows(rows, ("scenario", "delta_d"))
-    for key in sorted(groups, key=lambda item: (item[0], float(item[1] or 0.0))):
-        scenario, delta_d = key
+    groups = group_rows(rows, ("method", "scenario", "delta_d"))
+    for key in sorted(groups, key=lambda item: (item[0], item[1], float(item[2] or 0.0))):
+        method, scenario, delta_d = key
         summary = summarize_group(groups[key])
         body.append(
             [
+                method,
                 scenario or "nominal",
                 delta_d,
                 _fmt(summary["clean_success"]),
                 _fmt(summary["wedge"]),
                 _fmt(summary["collision"]),
-                _fmt(1.0 - summary["clean_success"]),
+                _fmt(summary["reject"]),
             ]
         )
     return markdown_table(
-        ["scenario", "delta_D", "clean_success_prob", "wedge_prob", "collision_prob", "failure_prob"],
+        ["method", "scenario", "delta_D", "clean_success_prob", "wedge_prob", "collision_prob", "reject_prob"],
         body,
     )
 
 
 def main() -> None:
+    import argparse
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input_dir", type=Path, default=Path("logs/narrow_passage_eval"))
     parser.add_argument("--pattern", type=str, default="*.csv")

@@ -1,31 +1,100 @@
 # Isaac Sim Narrow-Passage Low-Level Locomotion RL
 
-This package is scoped as:
+This repository contains Isaac Sim / Isaac Lab experiments for narrow-passage
+low-level quadruped locomotion control. The robot is ANYmal-C, and the policy is
+trained with PPO to output low-level joint position targets. The task is local
+narrow-passage traversal: move through a corridor while maintaining clearance,
+heading alignment, stability, and smooth actions.
 
-> RL-based low-level quadruped locomotion control for narrow-passage traversal.
+This repository does not train high-level memory, does not implement complete
+navigation decision-making, and does not evaluate full Nav2-style planning. Its
+scope is low-level locomotion control and Isaac Sim validation for narrow
+passages.
 
-It does not study memory, high-level navigation decisions, Nav2 planning, or
-two-layer decision policies. The policy trained here is an ANYmal-C low-level
-locomotion controller. Its action is a 12D joint position target.
+## Current Results
 
-## Research Scope
+The current nominal traversal result shows that the PPO locomotion policy can
+reliably pass straight narrow corridors:
 
-The task is to train a PPO locomotion policy that drives a quadruped from the
-entrance of a narrow passage to the exit while staying centered, stable, smooth,
-and collision-free.
+| Method | SR@75 | SR@85 | SR@95 | collision | wedge | reject |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| PPO low-level gait | 1.000 | 0.984 | 1.000 | 0.005 | 0.000 | 0.000 |
 
-Policy observations contain:
+Recovery-start scenarios remain much harder:
+
+| Scenario | Success | Collision | Mean min clearance | Mean oscillation |
+| --- | ---: | ---: | ---: | ---: |
+| left_wall | 0.438 | 0.484 | 0.180 | 33.39 |
+| right_wall | 0.000 | 1.000 | 0.187 | 7.44 |
+| yaw_left | 0.188 | 0.812 | 0.348 | 10.34 |
+| yaw_right | 0.156 | 0.500 | 0.330 | 45.00 |
+
+See [RESULTS.md](RESULTS.md) for the full result summary and interpretation.
+See [FAILURE_ANALYSIS.md](FAILURE_ANALYSIS.md) for the recovery-start failure
+mode analysis.
+
+## Result Figures
+
+The repository includes paper-style figures generated from
+`logs/narrow_passage_eval/`:
+
+![Success and collision rates across passage widths](figures/width_success_collision.png)
+
+![Recovery-start success and collision comparison](figures/scenario_recovery_failure.png)
+
+![Clearance and oscillation comparison](figures/clearance_oscillation.png)
+
+Regenerate them with:
+
+```bash
+python scripts/plot_narrow_results.py \
+  --input_dir logs/narrow_passage_eval \
+  --output_dir figures
+```
+
+## Key Findings
+
+- Nominal narrow-passage traversal is strong: the low-level PPO policy achieves
+  high clean success on 0.75 m, 0.85 m, and 0.95 m straight corridors.
+- Recovery-start scenarios are harder: near-wall and yawed initial states expose
+  contact-dominated failures, especially on right-wall and yaw-left starts.
+- Low-level RL alone is not a complete narrow-passage autonomy stack. These
+  results motivate combining low-level locomotion control with a higher-level
+  failure-aware navigation, recovery, or memory module.
+
+## Task Design
+
+Observation space:
 
 - robot proprioception: base linear/angular velocity, projected gravity, joint
   position, joint velocity, and previous action;
-- local command: forward velocity/heading command from the locomotion task;
-- compact local geometry: normalized progress, lateral offset, left/right wall
+- low-level command: forward velocity and heading command;
+- compact local geometry: normalized progress, lateral offset, left/right
   clearance, distance to goal, Delta-D, and feasible clearance margin.
 
-Policy observations do not contain memory counters such as stuck count, wedge
-count, oscillation count, or failure history.
+Action space:
+
+- 12D ANYmal-C joint position target from Isaac Lab's joint position action
+  term.
+
+Reward terms emphasize:
+
+- forward progress;
+- clean goal reaching;
+- centerline tracking;
+- clearance safety;
+- collision avoidance;
+- yaw alignment;
+- base height and orientation stability;
+- action smoothness, torque, and joint acceleration regularization;
+- time efficiency.
+
+The policy observation does not include stuck counters, wedge counters,
+oscillation history, failure memory, or high-level decision state.
 
 ## Main Tasks
+
+Nominal and geometry variants:
 
 ```bash
 Isaac-Narrow-Gait-Anymal-C-v0
@@ -33,8 +102,7 @@ Isaac-Narrow-Gait-OracleGeometry-Anymal-C-v0
 Isaac-Narrow-Gait-SensorEstimatedGeometry-Anymal-C-v0
 ```
 
-Recovery-start curriculum tasks still exist, but they are reset distributions
-only. The policy remains memory-free:
+Recovery-start curriculum tasks:
 
 ```bash
 Isaac-Narrow-Gait-Recovery-Mild-Anymal-C-v0
@@ -53,76 +121,51 @@ Isaac-Narrow-Gait-Generalization-AsymmetricObstacle-Anymal-C-v0
 Isaac-Narrow-Gait-Generalization-LCorridor-Anymal-C-v0
 ```
 
-## PPO Task Design
+Baseline and ablation tasks:
 
-Observation space:
+```bash
+Isaac-Narrow-Gait-Ablation-FullReward-Anymal-C-v0
+Isaac-Narrow-Gait-Ablation-NoClearanceReward-Anymal-C-v0
+Isaac-Narrow-Gait-Ablation-NoCenterlineReward-Anymal-C-v0
+Isaac-Narrow-Gait-Ablation-NoRecoveryCurriculum-Anymal-C-v0
+```
 
-- base linear velocity, base angular velocity, projected gravity;
-- commanded base velocity;
-- joint positions and velocities;
-- previous joint target action;
-- corridor geometry vector:
-  `x_norm, y_norm, left_clearance_norm, right_clearance_norm, dist_to_goal_norm, delta_d_norm, feasible_margin_norm`.
+The scripted velocity-controller baseline is exposed through:
 
-Action space:
+```bash
+scripts/narrow_passage/evaluate_scripted_velocity_controller.py
+```
 
-- 12D ANYmal-C joint position target from IsaacLab's joint position action term.
+It is an evaluator interface and CSV schema template until a real Isaac Sim
+scripted rollout is connected; no scripted baseline numbers are reported from
+template rows.
 
-Reward terms:
+## Repository Structure
 
-- forward progress reward;
-- clean goal reached bonus;
-- centerline tracking penalty;
-- unsafe clearance penalty;
-- collision/contact penalty;
-- yaw alignment penalty;
-- base height and orientation stability penalties;
-- action rate penalty;
-- torque and joint acceleration penalties;
-- time penalty.
+- `source/`
+  - Isaac Lab task registration, ANYmal-C narrow-passage environment
+    configuration, reset curricula, reward terms, and narrow-passage MDP helper
+    functions.
+- `scripts/`
+  - RSL-RL training and evaluation scripts, including
+    `evaluate_narrow_passage.py`, which exports per-trial CSV files, summary
+    JSON files, and markdown tables.
+- `logs/`
+  - local evaluation outputs when experiments are run in this workspace. Logs
+    are used for result aggregation but are not required to understand the task
+    code.
+- `make_eval_tables.py`
+  - utility for aggregating mixed-schema evaluation CSV files into
+    `logs/narrow_passage_eval/eval_tables.md`, grouped by method, scenario, and
+    width when a `method` column is available.
+- `RUN.md`
+  - reproducible training and evaluation commands.
+- `RESULTS.md`
+  - current nominal traversal and recovery-start result summary.
 
-Termination:
+## Quick Start
 
-- timeout;
-- clean goal reached;
-- base contact;
-- bad orientation or fall;
-- base too low;
-- sustained stuck condition for evaluation/training cutoff.
-
-Evaluation metrics:
-
-- clean success rate;
-- raw success rate;
-- collision rate;
-- wedge rate;
-- timeout rate;
-- mean time to goal;
-- min-clearance mean and minimum;
-- yaw-error mean;
-- oscillation count;
-- action smoothness;
-- fall rate.
-
-## Important Files
-
-- `source/isaaclab_tasks/.../anymal_c_narrow/narrow_gait_env_cfg.py`
-  - low-level locomotion environment, reset curricula, scene variants, and
-    reward weights.
-- `source/isaaclab_tasks/.../anymal_c_narrow/mdp_narrow.py`
-  - current-state geometry, reward, reset, and termination helpers.
-- `source/isaaclab_tasks/.../anymal_c_narrow/__init__.py`
-  - Gym task registration for low-level gait tasks.
-- `scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py`
-  - low-level checkpoint evaluator that writes CSV, summary JSON, and markdown
-    tables. Multi-scenario or multi-width evaluations are launched as isolated
-    subprocesses so Isaac Sim does not need to recreate multiple worlds inside
-    one process. Timeout terminations are counted in `timeout_rate`.
-- `scripts/narrow_passage/validate_narrow_pipeline.sh`
-  - convenience validation entry point for width scans, recovery-start tests,
-    and generalization tests.
-
-## Quick Training
+Train a nominal low-level gait policy:
 
 ```bash
 conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
@@ -130,16 +173,16 @@ conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py 
   --headless \
   --num_envs 2048 \
   --max_iterations 1500 \
-  --run_name low_level_gait_width085_stage1 \
+  --run_name low_level_stage1_wide_straight \
   --device cuda:0
 ```
 
-## Quick Evaluation
+Evaluate a checkpoint on a width scan:
 
 ```bash
 conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/evaluate_narrow_passage.py \
   --task Isaac-Narrow-Gait-OracleGeometry-Anymal-C-v0 \
-  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/<memory_free_run>/model_<iter>.pt \
+  --checkpoint logs/rsl_rl/anymal_c_narrow_gait/<run>/model_<iter>.pt \
   --scenarios nominal \
   --widths 0.75 0.85 0.95 \
   --num_envs 64 \
@@ -149,36 +192,22 @@ conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/evaluate_
   --device cuda:0
 ```
 
-Validation helper:
+Aggregate evaluation tables:
 
 ```bash
-LOW_LEVEL_CHECKPOINT=logs/rsl_rl/anymal_c_narrow_gait/<memory_free_run>/model_<iter>.pt \
-  bash scripts/narrow_passage/validate_narrow_pipeline.sh
+python make_eval_tables.py \
+  --input_dir logs/narrow_passage_eval \
+  --output logs/narrow_passage_eval/eval_tables.md
 ```
 
-Fast smoke validation:
+Standardize an existing evaluator CSV for an ablation method:
 
 ```bash
-LOW_LEVEL_CHECKPOINT=logs/rsl_rl/anymal_c_narrow_gait/<memory_free_run>/model_<iter>.pt \
-  NUM_ENVS=4 MAX_STEPS=80 WIDTHS="0.85" RUN_RECOVERY=0 RUN_GENERALIZATION=0 \
-  bash scripts/narrow_passage/validate_narrow_pipeline.sh
+python scripts/narrow_passage/standardize_eval_csv.py \
+  --input logs/narrow_passage_eval/right_wall_small_yaw_eval.csv \
+  --output logs/narrow_passage_eval/full_reward_policy.csv \
+  --method full_reward_policy
 ```
 
-## Current Recovery Curriculum Notes
-
-The recommended recovery sequence after a clean Stage 1 gait checkpoint is:
-
-1. `Isaac-Narrow-Gait-Recovery-Mild-Anymal-C-v0`
-   - mild entrance, small yaw, and light near-wall resets;
-   - used to preserve nominal traversal while introducing recovery starts.
-2. `Isaac-Narrow-Gait-Recovery-RightWall-SmallYaw-Anymal-C-v0`
-   - focused right-wall and small-yaw resets;
-   - intended for the common failure mode where `right_wall_start` has high
-     collision rate.
-3. `Isaac-Narrow-Gait-Recovery-NearWall-Clean-Anymal-C-v0` or
-   `Isaac-Narrow-Gait-Recovery-Yaw-Clean-Anymal-C-v0`
-   - use only after the focused stage no longer degrades nominal traversal.
-
-Do not report a recovery policy as a main contribution unless fixed-start
-evaluation reaches acceptable clean success and collision rates. The current
-repository is designed to make this failure mode visible rather than hide it.
+For staged curriculum commands and recovery-start evaluation protocols, see
+[RUN.md](RUN.md).

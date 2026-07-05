@@ -129,6 +129,84 @@ conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py 
   --device cuda:0
 ```
 
+## Baseline / Ablation Runs
+
+Use the same PPO runner and train each ablation under a separate `run_name`.
+These tasks keep the low-level controller, observation space, and action space
+unchanged; only reward weights or reset curriculum are changed.
+
+Full reward policy:
+
+```bash
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Narrow-Gait-Ablation-FullReward-Anymal-C-v0 \
+  --headless \
+  --num_envs 2048 \
+  --max_iterations 800 \
+  --resume \
+  --load_run <previous_run> \
+  --checkpoint <previous_checkpoint.pt> \
+  --run_name ablation_full_reward_policy \
+  --device cuda:0
+```
+
+No clearance reward:
+
+```bash
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Narrow-Gait-Ablation-NoClearanceReward-Anymal-C-v0 \
+  --headless \
+  --num_envs 2048 \
+  --max_iterations 800 \
+  --resume \
+  --load_run <previous_run> \
+  --checkpoint <previous_checkpoint.pt> \
+  --run_name ablation_no_clearance_reward \
+  --device cuda:0
+```
+
+No centerline reward:
+
+```bash
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Narrow-Gait-Ablation-NoCenterlineReward-Anymal-C-v0 \
+  --headless \
+  --num_envs 2048 \
+  --max_iterations 800 \
+  --resume \
+  --load_run <previous_run> \
+  --checkpoint <previous_checkpoint.pt> \
+  --run_name ablation_no_centerline_reward \
+  --device cuda:0
+```
+
+No recovery curriculum:
+
+```bash
+conda run -n issaaclabdog python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task Isaac-Narrow-Gait-Ablation-NoRecoveryCurriculum-Anymal-C-v0 \
+  --headless \
+  --num_envs 2048 \
+  --max_iterations 800 \
+  --resume \
+  --load_run <previous_run> \
+  --checkpoint <previous_checkpoint.pt> \
+  --run_name ablation_no_recovery_curriculum \
+  --device cuda:0
+```
+
+Scripted velocity-controller baseline interface:
+
+```bash
+python scripts/narrow_passage/evaluate_scripted_velocity_controller.py \
+  --write_template \
+  --output logs/narrow_passage_eval/scripted_velocity_controller.csv
+```
+
+The scripted controller template is not a completed baseline result. Report it
+only after connecting the script to real Isaac Sim rollouts and filling per-trial
+metrics.
+
 ## Evaluate
 
 Width scan:
@@ -186,6 +264,31 @@ For multi-width or multi-scenario runs, the evaluator launches each combination
 in an isolated subprocess. This avoids Isaac Sim world-recreation hangs between
 scenarios. `timeout_rate` is computed from the environment's `time_out`
 termination term as well as unfinished episodes.
+
+## Standardize Ablation CSV
+
+Each ablation or baseline should be stored with the shared schema:
+
+```text
+method, scenario, width, trial, success, collision, wedge, rejected, oscillation_count, completion_time, min_clearance
+```
+
+Convert an evaluator CSV without modifying the original file:
+
+```bash
+python scripts/narrow_passage/standardize_eval_csv.py \
+  --input logs/narrow_passage_eval/right_wall_small_yaw_eval.csv \
+  --output logs/narrow_passage_eval/full_reward_policy.csv \
+  --method full_reward_policy
+```
+
+Then aggregate method-grouped tables:
+
+```bash
+python make_eval_tables.py \
+  --input_dir logs/narrow_passage_eval \
+  --output logs/narrow_passage_eval/eval_tables.md
+```
 
 ## Convenience Validation
 
